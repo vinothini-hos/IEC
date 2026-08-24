@@ -1,0 +1,155 @@
+:root {
+  --header-height: 64px;
+  --sidebar-width: 246px;
+
+  --color-bg: #ffffff;
+  --color-bg-subtle: #f9fafb;
+  --color-border: #e5e7eb;
+
+  --color-text: #111827;
+  --color-text-muted: #6b7280;
+  --color-text-faint: #9ca3af;
+
+  --color-active-bg: #fdecec;
+  --color-active-text: #b3261e;
+  --color-badge-bg: #d92d20;
+  --color-badge-text: #ffffff;
+
+  --color-accent: #2563eb;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  background: var(--color-bg-subtle);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ---------- Header ---------- */
+.app-header {
+  height: var(--header-height);
+  min-height: var(--header-height);
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 12px;
+}
+
+.app-header .logo {
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+}
+
+.app-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  background: var(--color-bg);
+  border-right: 1px solid var(--color-border);
+  padding: 20px 12px;
+  overflow-y: auto;
+}
+
+.sidebar-group {
+  margin-bottom: 20px;
+}
+
+.sidebar-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+  padding: 0 10px 6px;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-size: 13.5px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  margin-bottom: 2px;
+}
+
+.sidebar-item:hover {
+  background: var(--color-bg-subtle);
+}
+
+.sidebar-item.active {
+  background: var(--color-active-bg);
+  color: var(--color-active-text);
+}
+
+.sidebar-item .icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-item .label {
+  flex: 1;
+}
+
+.sidebar-item .badge {
+  background: var(--color-badge-bg);
+  color: var(--color-badge-text);
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  min-width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+}
+
+/* ---------- Main content ---------- */
+.main-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}

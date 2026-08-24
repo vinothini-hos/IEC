@@ -1,0 +1,245 @@
+/* ---------- Thread list (Inbox) ---------- */
+.thread-list {
+  width: 360px;
+  min-width: 360px;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg);
+  overflow-y: auto;
+}
+
+.thread-list-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.thread-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--color-border);
+  cursor: pointer;
+}
+
+.thread-item:hover {
+  background: var(--color-bg-subtle);
+}
+
+.thread-item.selected {
+  background: var(--color-active-bg);
+}
+
+.thread-item-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.thread-item-participants {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thread-item.unread .thread-item-participants,
+.thread-item.unread .thread-item-subject {
+  font-weight: 700;
+}
+
+.thread-item-time {
+  font-size: 11.5px;
+  color: var(--color-text-faint);
+  flex-shrink: 0;
+}
+
+.thread-item-subject {
+  font-size: 13px;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thread-item-snippet {
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thread-item-unread-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--color-badge-bg);
+  display: inline-block;
+  margin-right: 6px;
+}
+
+/* ---------- Thread view ---------- */
+.thread-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--color-bg);
+}
+
+.thread-view-header {
+  padding: 16px 28px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.thread-view-header h2 {
+  margin: 0 0 2px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.thread-view-header .participants {
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+}
+
+.thread-timeline {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.email-bubble {
+  max-width: 72%;
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+}
+
+.email-bubble.incoming {
+  align-self: flex-start;
+  background: var(--color-bg-subtle);
+}
+
+.email-bubble.outgoing {
+  align-self: flex-end;
+  background: #eef4ff;
+  border-color: #dbe6fd;
+}
+
+.email-bubble-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-bottom: 6px;
+}
+
+.email-bubble-meta .from {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.email-bubble-body {
+  font-size: 13.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--color-text);
+}
+
+.email-bubble-attachments {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.attachment-chip {
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  background: var(--color-bg);
+}
+
+.direction-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+.direction-tag.incoming {
+  background: #e6f4ea;
+  color: #1a7f37;
+}
+
+.direction-tag.outgoing {
+  background: #eef4ff;
+  color: #2563eb;
+}
+
+/* ---------- Reply box ---------- */
+.reply-box {
+  border-top: 1px solid var(--color-border);
+  padding: 16px 28px;
+}
+
+.reply-box textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 13.5px;
+  outline: none;
+}
+
+.reply-box textarea:focus {
+  border-color: var(--color-accent);
+}
+
+.reply-box-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.btn-primary {
+  background: var(--color-active-text);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.empty-state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-faint);
+  font-size: 13.5px;
+}
