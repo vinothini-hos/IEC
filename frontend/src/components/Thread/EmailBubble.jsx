@@ -1,7 +1,11 @@
-import { formatFullTimestamp } from "../../utils/format";
+import { useState } from "react";
+import { formatFullTimestamp, splitQuotedReply } from "../../utils/format";
 import { api } from "../../api/client";
 
 export default function EmailBubble({ email }) {
+  const [showQuoted, setShowQuoted] = useState(false);
+  const { main, quoted } = splitQuotedReply(email.body_text);
+
   return (
     <div className={`email-bubble ${email.direction}`}>
       <div className="email-bubble-meta">
@@ -20,7 +24,19 @@ export default function EmailBubble({ email }) {
           {email.cc ? ` (cc: ${email.cc})` : ""}
         </span>
       </div>
-      <div className="email-bubble-body">{email.body_text}</div>
+      <div className="email-bubble-body">{main}</div>
+      {quoted && (
+        <div className="email-bubble-quoted">
+          <button
+            type="button"
+            className="quoted-toggle"
+            onClick={() => setShowQuoted((v) => !v)}
+          >
+            {showQuoted ? "Hide quoted text" : "Read more"}
+          </button>
+          {showQuoted && <div className="email-bubble-body quoted-text">{quoted}</div>}
+        </div>
+      )}
       {email.attachments?.length > 0 && (
         <div className="email-bubble-attachments">
           {email.attachments.map((a) =>

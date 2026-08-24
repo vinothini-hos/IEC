@@ -17,7 +17,6 @@ function getReplyRecipient(emails) {
 
 export default function ThreadView({ thread, onThreadUpdated }) {
   const [sending, setSending] = useState(false);
-  const timelineRef = useRef(null);
   const markedRef = useRef(new Set());
 
   // Mark unread incoming emails as read once the thread is open.
@@ -30,12 +29,6 @@ export default function ThreadView({ thread, onThreadUpdated }) {
         markedRef.current.add(e.id);
         api.markRead(e.id, true).catch(() => {});
       });
-  }, [thread]);
-
-  useEffect(() => {
-    if (timelineRef.current) {
-      timelineRef.current.scrollTop = timelineRef.current.scrollHeight;
-    }
   }, [thread]);
 
   if (!thread) {
@@ -67,8 +60,8 @@ export default function ThreadView({ thread, onThreadUpdated }) {
         <div className="participants">{thread.participants}</div>
       </div>
 
-      <div className="thread-timeline" ref={timelineRef}>
-        {thread.emails.map((email) => (
+      <div className="thread-timeline">
+        {[...thread.emails].reverse().map((email) => (
           <EmailBubble key={email.id} email={email} />
         ))}
       </div>

@@ -20,3 +20,30 @@ export function formatFullTimestamp(iso) {
 export function initialsOrEmail(addr) {
   return addr || "Unknown";
 }
+
+// Splits a plain-text email body into the new content and the quoted
+// reply history beneath it, so the UI can collapse the quoted part behind
+// a "Read more". Looks for Gmail's "On <date>, <name> wrote:" marker,
+// falling back to the first line starting with "> ".
+export function splitQuotedReply(text) {
+  if (!text) return { main: "", quoted: "" };
+
+  const onWroteMatch = text.match(/^On .{0,300}wrote:\s*$/m);
+  if (onWroteMatch) {
+    return {
+      main: text.slice(0, onWroteMatch.index).trimEnd(),
+      quoted: text.slice(onWroteMatch.index).trim(),
+    };
+  }
+
+  const lines = text.split("\n");
+  const quoteStart = lines.findIndex((l) => l.trimStart().startsWith(">"));
+  if (quoteStart > 0) {
+    return {
+      main: lines.slice(0, quoteStart).join("\n").trimEnd(),
+      quoted: lines.slice(quoteStart).join("\n").trim(),
+    };
+  }
+
+  return { main: text, quoted: "" };
+}
