@@ -46,12 +46,18 @@ def upsert_thread_from_gmail(db: Session, gmail_thread_id: str) -> models.Thread
         db.flush()
 
         for a in m["attachments"]:
+            local_path = None
+            if m["direction"] == "incoming" and a["gmail_attachment_id"]:
+                local_path = gmail_service.save_attachment_locally(
+                    m["gmail_message_id"], a["gmail_attachment_id"], a["filename"]
+                )
             db.add(models.Attachment(
                 email_id=email_row.id,
                 filename=a["filename"],
                 mime_type=a["mime_type"],
                 size_bytes=a["size_bytes"] or 0,
                 gmail_attachment_id=a["gmail_attachment_id"],
+                local_path=local_path,
             ))
 
         thread.last_message_at = email_row.sent_at

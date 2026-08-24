@@ -10,6 +10,7 @@ class AttachmentOut(BaseModel):
     filename: str
     mime_type: str
     size_bytes: int
+    has_download: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -53,14 +54,6 @@ class ThreadDetailOut(BaseModel):
     emails: list[EmailOut]
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class SendEmailIn(BaseModel):
-    to: str
-    cc: Optional[str] = ""
-    subject: str
-    body_text: str
-    thread_id: Optional[uuid.UUID] = None  # set when replying inside a thread
 
 
 class MarkReadIn(BaseModel):

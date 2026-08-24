@@ -1,8 +1,9 @@
 const BASE = "/api";
 
 async function request(path, options = {}) {
+  const isFormData = options.body instanceof FormData;
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: isFormData ? {} : { "Content-Type": "application/json" },
     ...options,
   });
   if (!res.ok) {
@@ -16,8 +17,17 @@ export const api = {
   listThreads: () => request("/threads"),
   getThread: (id) => request(`/threads/${id}`),
   syncThreads: () => request("/threads/sync", { method: "POST" }),
-  sendEmail: (payload) =>
-    request("/emails/send", { method: "POST", body: JSON.stringify(payload) }),
+  sendEmail: ({ to, cc, subject, body_text, thread_id, files }) => {
+    const form = new FormData();
+    form.append("to", to);
+    form.append("cc", cc || "");
+    form.append("subject", subject);
+    form.append("body_text", body_text);
+    if (thread_id) form.append("thread_id", thread_id);
+    (files || []).forEach((f) => form.append("files", f));
+    return request("/emails/send", { method: "POST", body: form });
+  },
+  attachmentDownloadUrl: (attachmentId) => `${BASE}/emails/attachments/${attachmentId}/download`,
   markRead: (emailId, isRead) =>
     request(`/emails/${emailId}/read`, {
       method: "PATCH",

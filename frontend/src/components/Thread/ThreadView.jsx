@@ -3,6 +3,18 @@ import EmailBubble from "./EmailBubble";
 import ReplyBox from "./ReplyBox";
 import { api } from "../../api/client";
 
+// Who a reply should go to: the sender of the most recent incoming email,
+// or — if we've only sent messages and haven't gotten a reply yet — the
+// recipient of our last outgoing one, so we keep addressing the other
+// party instead of ourselves.
+function getReplyRecipient(emails) {
+  for (let i = emails.length - 1; i >= 0; i--) {
+    if (emails[i].direction === "incoming") return emails[i].sender;
+  }
+  const last = emails[emails.length - 1];
+  return last?.recipient || last?.sender || "";
+}
+
 export default function ThreadView({ thread, onThreadUpdated }) {
   const [sending, setSending] = useState(false);
   const timelineRef = useRef(null);
@@ -30,17 +42,17 @@ export default function ThreadView({ thread, onThreadUpdated }) {
     return <div className="empty-state">Select a thread to view it</div>;
   }
 
-  const handleSend = async (bodyText) => {
-    const last = thread.emails[thread.emails.length - 1];
+  const handleSend = async (bodyText, files) => {
     setSending(true);
     try {
       const updated = await api.sendEmail({
         thread_id: thread.id,
-        to: last?.sender || "",
+        to: getReplyRecipient(thread.emails),
         subject: thread.subject.startsWith("Re:")
           ? thread.subject
           : `Re: ${thread.subject}`,
         body_text: bodyText,
+        files,
       });
       onThreadUpdated(updated);
     } finally {

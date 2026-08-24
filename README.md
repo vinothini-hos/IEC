@@ -55,14 +55,21 @@ cp /path/to/your/gmail_credentials.json credentials/gmail_credentials.json
 uvicorn app.main:app --reload --port 8000
 ```
 
-Pull your existing inbox in:
+The backend syncs your inbox automatically — a background task pulls
+recent threads from Gmail immediately on startup, then every
+`IEC_GMAIL_POLL_INTERVAL_SECONDS` (default 30s) after that. The frontend
+polls the API on the same cadence to pick up changes, so no manual command
+is needed. If you want to force an immediate re-sync (e.g. right after
+sending a test email), you can still run:
 
 ```bash
 curl -X POST http://localhost:8000/api/threads/sync
 ```
 
-For live push updates, point your Pub/Sub subscription's push endpoint at
-`https://<your-domain>/api/gmail/webhook` (use `ngrok` for local dev).
+For near-instant push updates instead of polling, point your Pub/Sub
+subscription's push endpoint at `https://<your-domain>/api/gmail/webhook`
+(use `ngrok` for local dev) — the polling loop and the webhook can run
+side by side.
 
 ### 3. Frontend
 
@@ -92,5 +99,7 @@ Opens on `http://localhost:5173`, proxying `/api` to the backend on
 - The Pub/Sub webhook currently re-syncs the most recent threads on any
   notification rather than using `historyId` for a precise delta — fine
   for a first pass, worth tightening once volume grows.
-- Attachment download (fetching the actual file bytes from Gmail) isn't
-  implemented yet — attachments show as chips with filename/size only.
+- Attachments on mail you *receive* are downloaded from Gmail during sync
+  and saved to `backend/storage/attachments/`, downloadable from the
+  thread view. Attachments you send are attached to the outgoing message
+  but not stored locally.

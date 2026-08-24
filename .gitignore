@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 .env
 backend/credentials/
+backend/storage/

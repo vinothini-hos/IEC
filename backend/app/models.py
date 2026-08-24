@@ -74,5 +74,12 @@ class Attachment(Base):
     mime_type = Column(String, default="application/octet-stream")
     size_bytes = Column(Integer, default=0)
     gmail_attachment_id = Column(String, nullable=True)
+    # Set only for attachments we sent ourselves (saved to disk at send
+    # time) — attachments on received mail aren't downloadable yet.
+    local_path = Column(String, nullable=True)
 
     email = relationship("Email", back_populates="attachments")
+
+    @property
+    def has_download(self) -> bool:
+        return bool(self.local_path)

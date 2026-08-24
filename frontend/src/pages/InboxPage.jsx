@@ -34,6 +34,16 @@ export default function InboxPage() {
     api.getThread(threadId).then(setThreadDetail);
   }, [threadId]);
 
+  // Backend auto-syncs with Gmail in the background; poll here so new
+  // mail shows up in the UI without a manual page reload.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadThreads();
+      if (threadId) api.getThread(threadId).then(setThreadDetail);
+    }, 20000);
+    return () => clearInterval(interval);
+  }, [threadId, loadThreads]);
+
   const handleSelect = (id) => navigate(`/threads/${id}`);
 
   const handleThreadUpdated = (updated) => {

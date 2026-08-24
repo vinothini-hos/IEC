@@ -10,7 +10,11 @@ Responsibilities:
   - decode the History API delta so the webhook can pull only what changed
 """
 import base64
+import logging
 import os
+import uuid
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
 
@@ -25,6 +29,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.send",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 def get_credentials() -> Credentials:
@@ -136,10 +142,21 @@ def send_email(
     cc: Optional[str] = None,
     gmail_thread_id: Optional[str] = None,
     in_reply_to_message_id: Optional[str] = None,
+    attachments: Optional[list[dict]] = None,
 ) -> dict:
+    """attachments (optional): [{"filename", "mime_type", "content": bytes}]"""
     service = get_service()
 
-    message = MIMEText(body_text)
+    if attachments:
+        message = MIMEMultipart()
+        message.attach(MIMEText(body_text))
+        for att in attachments:
+            part = MIMEApplication(att["content"], Name=att["filename"])
+            part["Content-Disposition"] = f'attachment; filename="{att["filename"]}"'
+            message.attach(part)
+    else:
+        message = MIMEText(body_text)
+
     message["to"] = to
     message["subject"] = subject
     if cc:
@@ -154,6 +171,28 @@ def send_email(
         body["threadId"] = gmail_thread_id
 
     return service.users().messages().send(userId="me", body=body).execute()
+
+
+def save_attachment_locally(
+    gmail_message_id: str, gmail_attachment_id: str, filename: str
+) -> Optional[str]:
+    """Downloads a received attachment's bytes from Gmail and saves them to
+    disk, returning the local path (or None if the fetch fails)."""
+    try:
+        service = get_service()
+        att = service.users().messages().attachments().get(
+            userId="me", messageId=gmail_message_id, id=gmail_attachment_id
+        ).execute()
+        content = base64.urlsafe_b64decode(att["data"])
+    except Exception:
+        logger.exception("Failed to download attachment %s", gmail_attachment_id)
+        return None
+
+    os.makedirs(settings.attachment_storage_dir, exist_ok=True)
+    local_path = os.path.join(settings.attachment_storage_dir, f"{uuid.uuid4()}_{filename}")
+    with open(local_path, "wb") as f:
+        f.write(content)
+    return local_path
 
 
 def decode_pubsub_history_id(pubsub_envelope: dict) -> Optional[str]:

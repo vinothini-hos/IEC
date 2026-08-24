@@ -40,6 +40,7 @@ CREATE TABLE attachments (
     filename VARCHAR NOT NULL,
     mime_type VARCHAR DEFAULT 'application/octet-stream',
     size_bytes INTEGER DEFAULT 0,
-    gmail_attachment_id VARCHAR
+    gmail_attachment_id VARCHAR,
+    local_path VARCHAR
 );
 CREATE INDEX idx_attachments_email_id ON attachments (email_id);
