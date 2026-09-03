@@ -30,6 +30,8 @@ def list_threads(db: Session = Depends(get_db)):
             unread_count=t.unread_count,
             latest_snippet=latest.snippet if latest else "",
             latest_direction=latest.direction.value if latest else None,
+            extraction_status=t.extraction_status,
+            classification_summary=(t.extraction_result or {}).get("classification_summary"),
         ))
     return out
 

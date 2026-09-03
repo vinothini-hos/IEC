@@ -33,4 +33,18 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ is_read: isRead }),
     }),
+  getSpecification: (threadId) => request(`/threads/${threadId}/specification`),
+  runExtraction: (threadId) => request(`/threads/${threadId}/extract`, { method: "POST" }),
+  sendClarification: (threadId, equipmentIndex) =>
+    request(`/threads/${threadId}/clarification`, {
+      method: "POST",
+      body: JSON.stringify({ equipment_index: equipmentIndex }),
+    }),
+  getSimilarProjects: (threadId, equipmentIndex) =>
+    request(`/threads/${threadId}/similar-projects?equipment_index=${equipmentIndex}`),
+  findSimilarProjects: (threadId, equipmentIndex) =>
+    request(`/threads/${threadId}/similar-projects`, {
+      method: "POST",
+      body: JSON.stringify({ equipment_index: equipmentIndex }),
+    }),
 };

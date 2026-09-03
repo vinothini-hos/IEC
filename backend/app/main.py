@@ -5,13 +5,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .database import Base, engine, SessionLocal
-from .routers import threads, emails, gmail_webhook
+from .database import Base, engine, SessionLocal, ensure_schema_migrations
+from .routers import threads, emails, gmail_webhook, specification
 from . import sync_service
 
 logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
+ensure_schema_migrations()
 
 app = FastAPI(title="IEC Mailbox API")
 
@@ -26,6 +27,7 @@ app.add_middleware(
 app.include_router(threads.router)
 app.include_router(emails.router)
 app.include_router(gmail_webhook.router)
+app.include_router(specification.router)
 
 
 @app.get("/api/health")

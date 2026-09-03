@@ -1,0 +1,393 @@
+/* ---------- Shared card ---------- */
+.card {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 20px 22px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+/* ---------- Project list (Spec Extraction picker) ---------- */
+.project-list-item-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.project-list-item-classification {
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.project-status-pill {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.project-status-extracted {
+  background: #e6f4ea;
+  color: #1a7f37;
+}
+
+.project-status-waiting_for_customer_response {
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+/* ---------- Page shell ---------- */
+.spec-extraction-page {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 24px 32px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ---------- Page header ---------- */
+.spec-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.spec-page-header h1 {
+  margin: 0 0 4px;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.spec-title-accent {
+  color: var(--color-active-text);
+}
+
+.spec-classification {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.spec-classification strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.spec-header-actions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* ---------- Workflow progress ---------- */
+.workflow-progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.workflow-step-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workflow-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.workflow-step-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.workflow-step.done {
+  color: #1a7f37;
+  background: #e6f4ea;
+}
+.workflow-step.done .workflow-step-dot {
+  background: #1a7f37;
+  color: #fff;
+}
+
+.workflow-step.current {
+  color: var(--color-active-text);
+  background: var(--color-active-bg);
+  font-weight: 600;
+}
+.workflow-step.current .workflow-step-dot {
+  background: var(--color-active-text);
+  color: #fff;
+}
+
+.workflow-step.inactive {
+  color: var(--color-text-faint);
+  background: var(--color-bg-subtle);
+}
+.workflow-step.inactive .workflow-step-dot {
+  background: var(--color-border);
+  color: var(--color-text-faint);
+}
+
+.workflow-step-arrow {
+  color: var(--color-text-faint);
+  font-size: 13px;
+}
+
+/* ---------- Equipment tabs ---------- */
+.equipment-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.equipment-tab {
+  border: none;
+  background: none;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.equipment-tab:hover {
+  color: var(--color-text);
+}
+
+.equipment-tab.active {
+  color: var(--color-active-text);
+  border-bottom-color: var(--color-active-text);
+  font-weight: 600;
+}
+
+/* ---------- Main two-column layout (spec card + clarification) ---------- */
+.spec-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 20px;
+  align-items: start;
+}
+
+.spec-main-col,
+.spec-side-col {
+  min-width: 0;
+}
+
+/* ---------- Specification card ---------- */
+.spec-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 16px;
+}
+
+.spec-card-header h2 {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.spec-completion-pill {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a7f37;
+  background: #e6f4ea;
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.spec-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 32px;
+}
+
+.spec-field {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.spec-field-label {
+  flex: 0 0 44%;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+}
+
+.spec-field-value {
+  flex: 1;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.4;
+}
+
+.spec-field-icon {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.spec-field-confirmed .spec-field-icon {
+  color: #1a7f37;
+}
+.spec-field-needs_review .spec-field-icon,
+.spec-field-needs_clarification .spec-field-icon {
+  color: #b45309;
+}
+.spec-field-missing .spec-field-icon {
+  color: var(--color-text-faint);
+}
+
+/* ---------- Clarification card ---------- */
+.clarification-card {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.clarification-card h2 {
+  margin: 0 0 4px;
+  font-size: 15.5px;
+  color: #92400e;
+}
+
+.clarification-count {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  color: #92400e;
+}
+
+.clarification-field-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.clarification-field {
+  background: var(--color-bg);
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.clarification-field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.clarification-field-value {
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.clarification-field-status {
+  font-size: 11.5px;
+  color: #b45309;
+  margin-top: 2px;
+  font-weight: 600;
+}
+
+.clarification-email {
+  border-top: 1px solid #fde68a;
+  padding-top: 14px;
+}
+
+.clarification-email-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 8px;
+}
+
+.clarification-email-meta {
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.clarification-email-body {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  white-space: pre-wrap;
+  color: var(--color-text);
+  margin: 0 0 12px;
+}
+
+.clarification-error {
+  color: #b91c1c;
+  font-size: 12.5px;
+  margin-bottom: 10px;
+}
+
+.clarification-clear-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: #1a7f37;
+}
+
+.clarification-clear-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #e6f4ea;
+  color: #1a7f37;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ---------- Empty state ---------- */
+.spec-empty-card {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--color-text-muted);
+}
+
+.spec-empty-card p {
+  margin: 0 0 16px;
+}

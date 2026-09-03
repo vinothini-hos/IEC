@@ -20,10 +20,39 @@ class Settings(BaseSettings):
     # from Gmail during sync (attachments we send are not persisted)
     attachment_storage_dir: str = "./storage/attachments"
 
+    # Local disk storage for extracted equipment specification JSON, one
+    # file per thread (see extraction.py)
+    specification_storage_dir: str = "./storage/specifications"
+
+    # Local disk storage for stage-2 template-consolidation JSON, one
+    # subfolder per thread, one file per equipment (see template_consolidation.py)
+    data_extraction_storage_dir: str = "./storage/data_extraction"
+
     # App
     cors_origins: list[str] = ["http://localhost:5173"]
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="IEC_")
+    # Sign-off name used on auto-generated clarification emails
+    email_signature_name: str = "IEC Fabchem"
+
+    # Blank query-sheet templates filled in and attached to clarification
+    # emails (see spec_template.py) — column layout must match
+    # SO2_TEMPLATE_FIELDS / CL2_TEMPLATE_FIELDS row order in template_consolidation.py
+    so2_template_path: str = r"C:\Users\iec_a\OneDrive\Documents\IEC Queries - SO2 template.xlsx"
+    cl2_template_path: str = r"C:\Users\iec_a\OneDrive\Documents\IEC Queries - CL2 template.xlsx"
+
+    # Similar Projects (RAG) — local on-disk Qdrant storage (one collection
+    # per equipment type, see rag_vector_store.py) and where a thread's
+    # retrieval result JSON gets saved (see rag_service.py)
+    rag_index_dir: str = "./storage/rag_index"
+    similar_projects_storage_dir: str = "./storage/similar_projects"
+    # Folders of past-project DATA_EXTRACTION .json files to index as history,
+    # one per equipment type — see index_rag_history.py
+    rag_history_dir_so2: str = "./rag_history/SO2"
+    rag_history_dir_cl2: str = "./rag_history/CL2"
+
+    # extra="ignore": .env also holds ANTHROPIC_API_KEY (unprefixed, read
+    # directly from the environment by the anthropic SDK in extraction.py)
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="IEC_", extra="ignore")
 
 
 settings = Settings()

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import EmailBubble from "./EmailBubble";
 import ReplyBox from "./ReplyBox";
 import { api } from "../../api/client";
@@ -16,6 +17,7 @@ function getReplyRecipient(emails) {
 }
 
 export default function ThreadView({ thread, onThreadUpdated }) {
+  const navigate = useNavigate();
   const [sending, setSending] = useState(false);
   const markedRef = useRef(new Set());
 
@@ -56,8 +58,19 @@ export default function ThreadView({ thread, onThreadUpdated }) {
   return (
     <div className="thread-view">
       <div className="thread-view-header">
-        <h2>{thread.subject || "(no subject)"}</h2>
-        <div className="participants">{thread.participants}</div>
+        <div className="thread-view-header-top">
+          <div>
+            <h2>{thread.subject || "(no subject)"}</h2>
+            <div className="participants">{thread.participants}</div>
+          </div>
+          <button
+            type="button"
+            className="extract-spec-btn"
+            onClick={() => navigate(`/spec-extraction/${thread.id}`)}
+          >
+            Extract Specification
+          </button>
+        </div>
       </div>
 
       <div className="thread-timeline">

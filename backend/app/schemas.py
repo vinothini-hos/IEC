@@ -42,6 +42,8 @@ class ThreadListItemOut(BaseModel):
     unread_count: int
     latest_snippet: str = ""
     latest_direction: Optional[str] = None
+    extraction_status: Optional[str] = None
+    classification_summary: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -58,3 +60,11 @@ class ThreadDetailOut(BaseModel):
 
 class MarkReadIn(BaseModel):
     is_read: bool = True
+
+
+class ClarificationIn(BaseModel):
+    equipment_index: int = 0
+
+
+class SimilarProjectsIn(BaseModel):
+    equipment_index: int = 0

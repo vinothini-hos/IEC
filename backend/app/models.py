@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy import (
     Column, String, Text, Boolean, DateTime, ForeignKey, Integer, Enum, func
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -25,6 +25,11 @@ class Thread(Base):
     participants = Column(Text, default="")
     last_message_at = Column(DateTime(timezone=True), server_default=func.now())
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Spec Extraction module — see template_consolidation.py for the shape.
+    # None | "extracted" | "waiting_for_customer_response"
+    extraction_result = Column(JSONB, nullable=True)
+    extraction_status = Column(String, nullable=True)
 
     emails = relationship(
         "Email", back_populates="thread",

@@ -1,20 +1,34 @@
-import { NavLink } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import {
-  InboxIcon, FileTextIcon, BookIcon, LayersIcon, PlugIcon, UsersIcon, SlidersIcon,
+  InboxIcon, BookIcon, LayersIcon, CopyCheckIcon, PlugIcon, UsersIcon, SlidersIcon,
 } from "./Icons";
 
 /**
- * Only "RFQ Inbox" is wired up (the mailbox module built in this pass).
- * The rest of the workflow items reflect the broader RFQ-to-proposal app
- * this mailbox lives in, and are placeholders until those modules exist.
+ * "RFQ Inbox", "Spec Extraction", and "Similar Projects" are wired up. The
+ * rest of the workflow items reflect the broader RFQ-to-proposal app this
+ * mailbox lives in, and are placeholders until those modules exist.
+ *
+ * `isActive` is computed manually (rather than via NavLink's built-in
+ * prefix matching) because NavLink's default matching for `to="/"` matches
+ * every route, which would make "RFQ Inbox" light up on Spec Extraction
+ * pages too.
  */
 const GROUPS = [
   {
     label: "Workflow",
     items: [
-      { key: "rfq-inbox", label: "RFQ Inbox", icon: InboxIcon, to: "/" },
-      { key: "proposals", label: "Proposals", icon: FileTextIcon, disabled: true },
-      { key: "reviews", label: "Reviews", icon: LayersIcon, disabled: true },
+      {
+        key: "rfq-inbox", label: "RFQ Inbox", icon: InboxIcon, to: "/",
+        isActive: (p) => p === "/" || p.startsWith("/threads/"),
+      },
+      {
+        key: "spec-extraction", label: "Spec Extraction", icon: LayersIcon, to: "/spec-extraction",
+        isActive: (p) => p.startsWith("/spec-extraction"),
+      },
+      {
+        key: "similar-projects", label: "Similar Projects", icon: CopyCheckIcon, to: "/similar-projects",
+        isActive: (p) => p.startsWith("/similar-projects"),
+      },
     ],
   },
   {
@@ -34,6 +48,8 @@ const GROUPS = [
 ];
 
 export default function Sidebar() {
+  const location = useLocation();
+
   return (
     <nav className="sidebar">
       {GROUPS.map((group) => (
@@ -54,18 +70,17 @@ export default function Sidebar() {
                 </div>
               );
             }
+            const active = item.isActive(location.pathname);
             return (
-              <NavLink
+              <Link
                 to={item.to}
                 key={item.key}
-                className={({ isActive }) =>
-                  "sidebar-item" + (isActive ? " active" : "")
-                }
+                className={"sidebar-item" + (active ? " active" : "")}
               >
                 <span className="icon"><Icon /></span>
                 <span className="label">{item.label}</span>
                 {!!item.badge && <span className="badge">{item.badge}</span>}
-              </NavLink>
+              </Link>
             );
           })}
         </div>

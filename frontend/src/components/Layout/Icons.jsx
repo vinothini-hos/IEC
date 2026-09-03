@@ -45,6 +45,14 @@ export const SearchIcon = () => (
   </svg>
 );
 
+export const CopyCheckIcon = () => (
+  <svg {...base}>
+    <rect x="8" y="8" width="13" height="13" rx="2" />
+    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    <path d="m11.5 14.5 2 2 4-4" />
+  </svg>
+);
+
 export const PlugIcon = () => (
   <svg {...base}>
     <path d="M12 22v-5" />
