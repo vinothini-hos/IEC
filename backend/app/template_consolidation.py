@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from .config import settings
+from .llm_client import call_llm
 
 # ---------------------------------------------------------------------------
 # Template field definitions
@@ -139,11 +140,7 @@ Source References: {mentioned_in_text}
 """
 
 
-def fill_template_fields(equipment: dict, field_defs: list, model: str = "claude-sonnet-4-6") -> dict:
-    import anthropic
-
-    client = anthropic.Anthropic()
-
+def fill_template_fields(equipment: dict, field_defs: list) -> dict:
     field_list_str = "\n".join(f"- {key}: {label}" for key, label in field_defs)
 
     mentioned_in = equipment.get("mentioned_in", [])
@@ -159,16 +156,7 @@ def fill_template_fields(equipment: dict, field_defs: list, model: str = "claude
         field_list=field_list_str,
     )
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=2500,
-        system=system_prompt,
-        messages=[{"role": "user", "content": "Extract the field values and statuses as instructed."}],
-    )
-
-    raw_text = "".join(
-        block.text for block in response.content if getattr(block, "type", None) == "text"
-    ).strip()
+    raw_text = call_llm(system_prompt, "Extract the field values and statuses as instructed.")
     cleaned = raw_text.replace("```json", "").replace("```", "").strip()
 
     try:

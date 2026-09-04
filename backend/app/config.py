@@ -50,8 +50,12 @@ class Settings(BaseSettings):
     rag_history_dir_so2: str = "./rag_history/SO2"
     rag_history_dir_cl2: str = "./rag_history/CL2"
 
-    # extra="ignore": .env also holds ANTHROPIC_API_KEY (unprefixed, read
-    # directly from the environment by the anthropic SDK in extraction.py)
+    # LLM backend — local Ollama server (see llm_client.py). Replaces the
+    # earlier direct Anthropic/Claude calls in extraction.py,
+    # template_consolidation.py, and rag_reranker.py.
+    ollama_base_url: str = "http://192.168.1.6:11434"
+    ollama_model: str = "qwen3:4b"
+
     model_config = SettingsConfigDict(env_file=".env", env_prefix="IEC_", extra="ignore")
 
 

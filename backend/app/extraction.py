@@ -4,18 +4,16 @@ Equipment specification extraction.
 Ports the standalone equipment_extractor.py / llm_extractor.py scripts into the
 mailbox backend: given a thread already synced from Gmail (body_text on each
 Email row, downloaded attachments on disk via Attachment.local_path), extract
-the SO2/CL2 equipment requests mentioned across the whole conversation via Claude.
+the SO2/CL2 equipment requests mentioned across the whole conversation via a
+local Ollama model (see llm_client.py).
 """
 
 import json
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 from .config import settings
+from .llm_client import call_llm
 
 # ---------------------------------------------------------------------------
 # Attachment text extraction (PDF / DOCX / XLSX / CSV)
@@ -232,13 +230,7 @@ USER_PROMPT_TEMPLATE = """=== EMAIL THREAD ===
 """
 
 
-def call_claude_for_extraction(
-    email_body: str, attachments: dict, model: str = "claude-sonnet-4-6"
-) -> list:
-    import anthropic
-
-    client = anthropic.Anthropic()
-
+def call_claude_for_extraction(email_body: str, attachments: dict) -> list:
     attachments_text = (
         "\n\n".join(
             f"### Attachment: {name} ###\n{text}" for name, text in attachments.items()
@@ -252,16 +244,7 @@ def call_claude_for_extraction(
     )
     system_prompt = SYSTEM_PROMPT.format(knowledge_base=EQUIPMENT_KNOWLEDGE_BASE)
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=4000,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-
-    raw_text = "".join(
-        block.text for block in response.content if getattr(block, "type", None) == "text"
-    ).strip()
+    raw_text = call_llm(system_prompt, user_prompt)
     cleaned = raw_text.replace("```json", "").replace("```", "").strip()
 
     try:

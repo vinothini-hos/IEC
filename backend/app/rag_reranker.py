@@ -1,13 +1,15 @@
 """
 Takes the new incoming project's spec text plus a shortlist of candidate past
-projects (already narrowed down by vector similarity search) and asks Claude
-to produce a refined 0-100 relevance score and a one-sentence justification
-for each — comparing field-by-field rather than relying on embedding
-similarity alone.
+projects (already narrowed down by vector similarity search) and asks the
+local LLM (see llm_client.py) to produce a refined 0-100 relevance score and
+a one-sentence justification for each — comparing field-by-field rather than
+relying on embedding similarity alone.
 """
 
 import sys
 import json
+
+from .llm_client import call_llm
 
 SYSTEM_PROMPT = """You are a technical engineering assistant helping an engineer find past project
 specifications that are relevant reference points for a new incoming project, for the same type of
@@ -60,16 +62,12 @@ must appear exactly once in the output.
 """
 
 
-def rerank_candidates(new_project_text: str, candidates: list, model: str = "claude-sonnet-4-6") -> list:
+def rerank_candidates(new_project_text: str, candidates: list) -> list:
     """
     candidates: list of dicts, each with "project_id" and "source_text".
     Returns: list of {"project_id", "relevance_score", "justification"} dicts,
              one per candidate, unsorted (caller sorts/truncates).
     """
-    import anthropic
-
-    client = anthropic.Anthropic()
-
     candidates_text = "\n\n".join(
         f"--- Candidate: {c['project_id']} ---\n{c['source_text']}"
         for c in candidates
@@ -80,17 +78,7 @@ def rerank_candidates(new_project_text: str, candidates: list, model: str = "cla
         candidates_text=candidates_text,
     )
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=4000,
-        system=prompt,
-        messages=[{"role": "user", "content": "Score and justify each candidate as instructed."}],
-    )
-
-    raw_text = "".join(
-        block.text for block in response.content if getattr(block, "type", None) == "text"
-    ).strip()
-
+    raw_text = call_llm(prompt, "Score and justify each candidate as instructed.")
     cleaned = raw_text.replace("```json", "").replace("```", "").strip()
 
     try:
