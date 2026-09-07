@@ -127,7 +127,14 @@ Source References: {mentioned_in_text}
    Capacity - kg/hr" may appear in the entry as "50 kg/hr capacity" or similar phrasing).
 6. Keep each value concise — a short phrase, figure with units, or Yes/No — unless the field
    inherently requires short descriptive text (e.g. "Source of SO2").
-7. Return ONLY a valid JSON object, no markdown fences, no explanations, in this exact structure:
+7. COMPLETENESS CHECK (do this before writing your final answer): the "Equipment Configuration"
+   text is a long paragraph that states a fact for almost every template field, including facts
+   near the middle/end of the paragraph — do not stop reading partway through. Go through the
+   paragraph sentence by sentence and match each sentence to the template field(s) it answers. A
+   field must only be marked "needs_clarification" or "missing" if, after this full read-through,
+   you confirm the paragraph truly never states a value for it — not because the fact appeared
+   later in a long paragraph and was skipped.
+8. Return ONLY a valid JSON object, no markdown fences, no explanations, in this exact structure:
 
    {{
      "fields": {{
@@ -240,10 +247,21 @@ def _classification_label(equipment_name: str, fields: dict) -> str:
     return " · ".join(parts)
 
 
+def _has_real_value(entry: dict) -> bool:
+    return (entry or {}).get("status") in ("confirmed", "needs_review") and entry.get("value") not in (
+        None,
+        "",
+    )
+
+
 def run_data_extraction_for_thread(thread, requested_equipments: list) -> list:
     """For each requested_equipment entry, fill its template, classify field
     statuses, build a clarification draft if needed, and write it to
-    storage/data_extraction/{thread_id}/<idx>_<type>_<desc>.json.
+    storage/data_extraction/{thread_id}/<idx>_<type>_<name>.json — one
+    stable file per equipment item, updated in place on every re-extraction
+    rather than replaced wholesale: a field only overwrites its previous
+    value when this run actually found one, so a run where the model
+    temporarily misses a field doesn't erase a previously confirmed value.
 
     Returns the "equipment_items" list stored on Thread.extraction_result.
     """
@@ -251,6 +269,7 @@ def run_data_extraction_for_thread(thread, requested_equipments: list) -> list:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     equipment_items = []
+    written_filenames = set()
     for idx, equipment in enumerate(requested_equipments, start=1):
         equipment_name = equipment.get("equipment_name", "Unknown Equipment")
         field_defs, type_label = get_template_fields(equipment_name)
@@ -259,11 +278,22 @@ def run_data_extraction_for_thread(thread, requested_equipments: list) -> list:
 
         field_values = fill_template_fields(equipment, field_defs)
 
+        filename = f"{idx:02d}_{type_label}_{_safe_filename(equipment_name)}.json"
+        out_path = out_dir / filename
+        previous_fields = {}
+        if out_path.exists():
+            try:
+                previous_fields = json.loads(out_path.read_text()).get("fields", {})
+            except (json.JSONDecodeError, OSError):
+                previous_fields = {}
+
         fields = {}
         filled = 0
         needs_clarification_labels = []
         for key, label in field_defs:
             entry = field_values.get(key) or {"value": None, "status": "missing", "source": None}
+            if not _has_real_value(entry) and _has_real_value(previous_fields.get(key)):
+                entry = previous_fields[key]
             status = entry.get("status", "missing")
             fields[key] = {
                 "label": label,
@@ -273,7 +303,7 @@ def run_data_extraction_for_thread(thread, requested_equipments: list) -> list:
             }
             if status == "confirmed":
                 filled += 1
-            if status == "needs_clarification":
+            if status in ("needs_clarification", "missing"):
                 needs_clarification_labels.append(label)
 
         total = len(field_defs)
@@ -293,11 +323,13 @@ def run_data_extraction_for_thread(thread, requested_equipments: list) -> list:
             ),
         }
         equipment_items.append(item)
+        out_path.write_text(json.dumps(item, indent=2))
+        written_filenames.add(filename)
 
-        filename = (
-            f"{idx:02d}_{type_label}_"
-            f"{_safe_filename(equipment.get('equipment_definition', equipment_name))}.json"
-        )
-        (out_dir / filename).write_text(json.dumps(item, indent=2))
+    # Remove files for equipment that no longer appears in this run's
+    # extraction (genuinely dropped, not just temporarily missed).
+    for old_file in out_dir.glob("*.json"):
+        if old_file.name not in written_filenames:
+            old_file.unlink()
 
     return equipment_items

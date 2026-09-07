@@ -23,21 +23,18 @@ export default function SpecExtractionPickerPage() {
   }, [loadProjects]);
 
   return (
-    <div className="main-content">
-      <div className="thread-list">
-        <div className="thread-list-header">Extracted Specifications</div>
-        {loading && <div className="empty-state">Loading…</div>}
-        {!loading && projects.length === 0 && (
-          <div className="empty-state">
-            No specifications extracted yet. Open an RFQ from the inbox and click "Extract
-            Specification" to get started.
-          </div>
-        )}
-        {projects.map((t) => (
-          <ProjectListItem key={t.id} thread={t} onClick={() => navigate(`/spec-extraction/${t.id}`)} />
-        ))}
-      </div>
-      <div className="empty-state">Select a project to view its extracted specification</div>
+    <div className="project-list-page">
+      <div className="thread-list-header">Extracted Specifications</div>
+      {loading && <div className="empty-state">Loading…</div>}
+      {!loading && projects.length === 0 && (
+        <div className="empty-state">
+          No specifications extracted yet. Open an RFQ from the inbox and click "Extract
+          Specification" to get started.
+        </div>
+      )}
+      {projects.map((t) => (
+        <ProjectListItem key={t.id} thread={t} onClick={() => navigate(`/spec-extraction/${t.id}`)} />
+      ))}
     </div>
   );
 }

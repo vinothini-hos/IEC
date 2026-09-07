@@ -177,18 +177,29 @@ and understand what is being requested.
 7. Do not infer or hallucinate equipment that is not explicitly supported by text evidence matching
    the knowledge base definitions.
 
+8. RECENCY WHEN VALUES CONFLICT: attachments and email bodies are labeled with their send date/time,
+   ordered oldest to newest, and the single most recent attachment (if any) is explicitly marked
+   "MOST RECENT ATTACHMENT". A thread often starts with a rough enquiry, gets a clarification request,
+   and ends with the customer's revised/filled-in spec sheet — later documents supersede earlier ones.
+   If two documents state DIFFERENT values for the same parameter of the same equipment item, use the
+   value from the more recent document (by send date/time) and ignore the older, now-outdated value.
+   Only fall back to an older document's value for a parameter if no later document mentions that
+   parameter at all.
+
 === OUTPUT FORMAT ===
 
-Return ONLY a valid JSON array, no explanations, no markdown fences, in this exact structure:
+Return ONLY a valid JSON array, no explanations, no markdown fences, in this exact structure. Write
+the fields in this exact order for each item — "equipment_definition" is the longest field, so write
+it LAST, after "count" and "mentioned_in" are already filled in, so those are never left out:
 
 [
   {{
     "equipment_name": "",
-    "equipment_definition": "",
     "count": 0,
     "mentioned_in": [
       {{"document_name": "", "document_location": ""}}
-    ]
+    ],
+    "equipment_definition": ""
   }}
 ]
 
@@ -203,13 +214,21 @@ FIELD DEFINITIONS:
   "Service", "Medium", "Vaporization Capacity", "Heating Method", "Inlet Pressure", "Inlet
   Temperature", "Outlet Pressure", "Outlet Temperature", "Material of Construction",
   "Instrumentation", "Safety Provisions", "Process Connections", "Applicable Standards", vendor
-  information requested, notes, etc.), EVERY ROW of that table must be represented somewhere in
-  this paragraph — including rows whose value is a placeholder like "To be confirmed", "Vendor to
-  recommend", or "Vendor to specify". Do not silently drop a parameter just because its value is
-  non-specific — state that it was left open/to-be-confirmed/vendor-to-decide, since that is itself
-  a fact about the requirement. Treat this field as a lossless prose transcription of the source
-  spec, not a highlights reel: after writing it, mentally check every row/field/label in the source
-  attachment for this item and confirm each one appears in the paragraph in some form.
+  information requested, notes, etc.), EVERY ROW that actually APPEARS in that table must be
+  represented somewhere in this paragraph — including rows whose value is a placeholder like "To be
+  confirmed", "Vendor to recommend", or "Vendor to specify". Do not silently drop a parameter just
+  because its value is non-specific — state that it was left open/to-be-confirmed/vendor-to-decide,
+  since that is itself a fact about the requirement. Treat this field as a lossless prose
+  transcription of the source spec, not a highlights reel: after writing it, mentally check every
+  row/field/label in the source attachment for this item and confirm each one appears in the
+  paragraph in some form.
+  DO NOT DO THIS FOR PARAMETERS THAT NEVER APPEAR IN THE SOURCE AT ALL: the completeness requirement
+  above applies only to rows/fields that are actually present in the source (even if their value is
+  blank or "TBC"). If a parameter is not mentioned anywhere in the email or attachments — no row, no
+  label, no reference to it at all — do not invent a status for it (e.g. do not write "no scrubber
+  is required" or "purity spec to be confirmed by vendor" when the source never brings up a scrubber
+  or purity at all). Simply omit any parameter that has zero textual evidence in the source; do not
+  fill silence with an assumed "not required" or "to be confirmed".
   FORMAT: always write this as flowing prose in plain sentences — even if the source data appears
   as a table, spec sheet, or row/column layout in the attachment. Convert tabular fields into
   natural sentences (e.g. a table row like "Capacity: 1000 kg/hr | MOC: Monel | Type: Water bath"
@@ -230,13 +249,15 @@ USER_PROMPT_TEMPLATE = """=== EMAIL THREAD ===
 """
 
 
-def call_claude_for_extraction(email_body: str, attachments: dict) -> list:
-    attachments_text = (
-        "\n\n".join(
-            f"### Attachment: {name} ###\n{text}" for name, text in attachments.items()
+def call_claude_for_extraction(email_body: str, attachments: list) -> list:
+    blocks = []
+    for i, att in enumerate(attachments):
+        is_most_recent = i == len(attachments) - 1
+        tag = " — MOST RECENT ATTACHMENT" if is_most_recent else ""
+        blocks.append(
+            f"### Attachment: {att['filename']} (sent {att['sent_at']}{tag}) ###\n{att['text']}"
         )
-        or "(no attachments)"
-    )
+    attachments_text = "\n\n".join(blocks) or "(no attachments)"
 
     user_prompt = USER_PROMPT_TEMPLATE.format(
         email_body=email_body or "(empty)",
@@ -248,11 +269,22 @@ def call_claude_for_extraction(email_body: str, attachments: dict) -> list:
     cleaned = raw_text.replace("```json", "").replace("```", "").strip()
 
     try:
-        return json.loads(cleaned)
+        parsed = json.loads(cleaned)
     except json.JSONDecodeError as e:
         print("WARNING: Failed to parse model output as JSON.", file=sys.stderr)
         print("Raw output was:\n", raw_text, file=sys.stderr)
         raise e
+
+    for item in parsed:
+        item.setdefault("count", 1)
+        item.setdefault("mentioned_in", [])
+        item.setdefault("equipment_definition", "")
+
+    # The model's array order isn't guaranteed to be stable across runs —
+    # sort deterministically so re-extracting the same thread doesn't
+    # reshuffle the equipment list/fields order shown in the UI.
+    parsed.sort(key=lambda item: item.get("equipment_name", ""))
+    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -274,17 +306,20 @@ def extract_specification_for_thread(thread) -> list:
     emails_sorted = sorted(thread.emails, key=lambda e: e.sent_at)
     email_body = "\n\n".join(_format_email_for_prompt(e) for e in emails_sorted)
 
-    attachments = {}
+    attachments = []
     for email in emails_sorted:
         for attachment in email.attachments:
             if not attachment.local_path:
                 continue
             try:
-                attachments[attachment.filename] = extract_text_from_attachment(
-                    attachment.local_path
-                )
+                text = extract_text_from_attachment(attachment.local_path)
             except Exception as e:
-                attachments[attachment.filename] = f"[ERROR extracting content: {e}]"
+                text = f"[ERROR extracting content: {e}]"
+            attachments.append({
+                "filename": attachment.filename,
+                "sent_at": email.sent_at,
+                "text": text,
+            })
 
     return call_claude_for_extraction(email_body, attachments)
 

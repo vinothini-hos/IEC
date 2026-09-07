@@ -16,7 +16,11 @@ from .config import settings
 # request option is not fully honored by this model/Ollama build). The one
 # thing that's consistent: the real answer is whatever comes after the last
 # "</think>" marker, if one is present at all.
-DEFAULT_MAX_TOKENS = 8000
+DEFAULT_MAX_TOKENS = 16000
+# Context window big enough to hold a long email thread + attachments
+# (input) plus the full JSON response (output) without either getting
+# silently truncated by Ollama.
+DEFAULT_NUM_CTX = 32768
 
 
 def call_llm(system_prompt: str, user_message: str, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
@@ -32,7 +36,16 @@ def call_llm(system_prompt: str, user_message: str, max_tokens: int = DEFAULT_MA
             ],
             "stream": False,
             "think": False,
-            "options": {"num_predict": max_tokens},
+            # temperature 0 + a fixed seed make extraction deterministic —
+            # without this, the model samples a different (sometimes
+            # contradictory) answer to the same factual question on every
+            # run, even given identical source text.
+            "options": {
+                "num_predict": max_tokens,
+                "num_ctx": DEFAULT_NUM_CTX,
+                "temperature": 0,
+                "seed": 42,
+            },
         },
         timeout=300,
     )

@@ -1,8 +1,13 @@
+function formatValue(value) {
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return value || "—";
+}
+
 export default function ClarificationCard({
   item, sending, sent, error, onSend,
 }) {
   const needsClarification = Object.entries(item.fields || {}).filter(
-    ([, f]) => f.status === "needs_clarification"
+    ([, f]) => f.status === "needs_clarification" || f.status === "missing"
   );
 
   if (needsClarification.length === 0) return null;
@@ -22,9 +27,11 @@ export default function ClarificationCard({
           <div className="clarification-field" key={key}>
             <div className="clarification-field-label">{f.label}</div>
             <div className="clarification-field-value">
-              Current value: {f.value || "—"}
+              Current value: {formatValue(f.value)}
             </div>
-            <div className="clarification-field-status">Status: Needs clarification</div>
+            <div className="clarification-field-status">
+              Status: {f.status === "missing" ? "Missing" : "Needs clarification"}
+            </div>
           </div>
         ))}
       </div>

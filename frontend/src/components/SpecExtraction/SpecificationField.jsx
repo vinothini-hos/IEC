@@ -5,11 +5,16 @@ const STATUS_ICON = {
   missing: "—",
 };
 
+function formatValue(value) {
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return value || "—";
+}
+
 export default function SpecificationField({ label, value, status, source }) {
   return (
     <div className={`spec-field spec-field-${status}`} title={source ? `Source: ${source}` : undefined}>
       <span className="spec-field-label">{label}</span>
-      <span className="spec-field-value">{value || "—"}</span>
+      <span className="spec-field-value">{formatValue(value)}</span>
       <span className="spec-field-icon">{STATUS_ICON[status] || "—"}</span>
     </div>
   );

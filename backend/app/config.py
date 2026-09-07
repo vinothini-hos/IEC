@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     # Similar Projects (RAG) — local on-disk Qdrant storage (one collection
     # per equipment type, see rag_vector_store.py) and where a thread's
     # retrieval result JSON gets saved (see rag_service.py)
-    rag_index_dir: str = "./storage/rag_index"
+    rag_index_dir: str = "./storage/rag_index_v2"
     similar_projects_storage_dir: str = "./storage/similar_projects"
     # Folders of past-project DATA_EXTRACTION .json files to index as history,
     # one per equipment type — see index_rag_history.py
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     # LLM backend — local Ollama server (see llm_client.py). Replaces the
     # earlier direct Anthropic/Claude calls in extraction.py,
     # template_consolidation.py, and rag_reranker.py.
-    ollama_base_url: str = "http://192.168.1.6:11434"
+    ollama_base_url: str = "http://213.173.110.200:23211"
     ollama_model: str = "qwen3:4b"
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="IEC_", extra="ignore")
