@@ -61,15 +61,27 @@ def find_similar_projects(equipment_item: dict, top_k: int = 10, candidates: int
     reranked = rag_reranker.rerank_candidates(new_project_text, candidates_for_rerank)
 
     vector_score_by_id = {c["project_id"]: c["score"] for c in shortlist}
+    payload_by_id = {c["project_id"]: c["payload"] for c in shortlist}
 
     results = []
     for r in reranked:
         pid = r.get("project_id")
+        payload = payload_by_id.get(pid, {})
+        raw_fields = payload.get("fields", {})
         results.append({
             "project_id": pid,
             "relevance_score": r.get("relevance_score"),
             "justification": r.get("justification"),
             "vector_similarity": round(vector_score_by_id.get(pid, 0.0), 4),
+            "fields": {
+                key: {"label": field_labels.get(key, key), "value": value}
+                for key, value in raw_fields.items()
+                if value is not None
+            },
+            "key_points": payload.get("key_points", []),
+            "source_text": payload.get("source_text", ""),
+            "customer_details": payload.get("customer_details"),
+            "boq": payload.get("boq", []),
         })
 
     results.sort(key=lambda r: r.get("relevance_score") or 0, reverse=True)

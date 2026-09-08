@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import PageHeader from "../components/SimilarProjects/PageHeader";
 import QuerySummaryCard from "../components/SimilarProjects/QuerySummaryCard";
 import ProjectCard from "../components/SimilarProjects/ProjectCard";
+import ProjectDetailModal from "../components/SimilarProjects/ProjectDetailModal";
 
 export default function SimilarProjectsPage() {
   const { threadId } = useParams();
@@ -15,7 +16,7 @@ export default function SimilarProjectsPage() {
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState(null);
   const [similarResult, setSimilarResult] = useState(null);
-  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [selectedResult, setSelectedResult] = useState(null);
 
   const runSearch = useCallback(async () => {
     setSearching(true);
@@ -23,7 +24,6 @@ export default function SimilarProjectsPage() {
     try {
       const result = await api.findSimilarProjects(threadId, equipmentIndex);
       setSimilarResult(result);
-      setSelectedProjectId(null);
     } catch (err) {
       setSearchError(err.message);
     } finally {
@@ -35,7 +35,6 @@ export default function SimilarProjectsPage() {
     let cancelled = false;
     setLoading(true);
     setSimilarResult(null);
-    setSelectedProjectId(null);
     setSearchError(null);
 
     (async () => {
@@ -73,7 +72,7 @@ export default function SimilarProjectsPage() {
 
   const handleUseTopMatch = () => {
     if (results.length === 0) return;
-    setSelectedProjectId(results[0].project_id);
+    setSelectedResult(results[0]);
   };
 
   if (loading) {
@@ -120,15 +119,12 @@ export default function SimilarProjectsPage() {
       {results.length > 0 && (
         <div className="project-results-list">
           {results.map((r) => (
-            <ProjectCard
-              key={r.project_id}
-              result={r}
-              selected={r.project_id === selectedProjectId}
-              onSelect={() => setSelectedProjectId(r.project_id)}
-            />
+            <ProjectCard key={r.project_id} result={r} onSelect={() => setSelectedResult(r)} />
           ))}
         </div>
       )}
+
+      <ProjectDetailModal result={selectedResult} onClose={() => setSelectedResult(null)} />
     </div>
   );
 }

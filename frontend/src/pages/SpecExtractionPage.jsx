@@ -86,7 +86,9 @@ export default function SpecExtractionPage() {
   const activeItem = items[activeIndex];
   const needsClarification =
     !!activeItem &&
-    Object.values(activeItem.fields || {}).some((f) => f.status === "needs_clarification");
+    Object.values(activeItem.fields || {}).some(
+      (f) => f.status === "needs_clarification" || f.status === "missing"
+    );
 
   return (
     <div className="spec-extraction-page">

@@ -106,7 +106,11 @@ Source References: {mentioned_in_text}
    reference context) above. Do not use outside/general knowledge about SO2 or CL2 vaporizers, and
    do not invent or assume values that are not stated in this entry.
 2. Classify each field's "status" as exactly one of:
-   - "confirmed": a clear, usable value is stated for this field.
+   - "confirmed": a clear, usable value is stated for this field. A DEFINITE NEGATIVE ANSWER COUNTS
+     AS CONFIRMED, not missing — e.g. "site layout is not provided", "no scrubber required", "zero
+     tonners connected" are all real, usable answers (value = the stated negative, e.g. "Not
+     provided" / "No" / "0"). Only use "missing" when the topic is never addressed at all — never
+     for a topic the source explicitly answers with "no"/"not provided"/"none".
    - "needs_review": a value is stated but it is ambiguous, an unexplained code/abbreviation, or
      otherwise unclear enough that an engineer should double-check it before using it (e.g. a
      cryptic abbreviation instead of a real figure or description).
@@ -127,14 +131,19 @@ Source References: {mentioned_in_text}
    Capacity - kg/hr" may appear in the entry as "50 kg/hr capacity" or similar phrasing).
 6. Keep each value concise — a short phrase, figure with units, or Yes/No — unless the field
    inherently requires short descriptive text (e.g. "Source of SO2").
-7. COMPLETENESS CHECK (do this before writing your final answer): the "Equipment Configuration"
+7. WATCH FOR TWIN-VALUE SENTENCES: a single sentence often states two related but DIFFERENT values
+   for two DIFFERENT fields, e.g. "the inlet pressure is 56 bar(g) and the outlet pressure is 67
+   bar(g)" answers TWO separate fields (inlet AND outlet), each with its own number. Do not assign
+   only the second number and leave the first field blank — read the full sentence and match each
+   clause to its own field.
+8. COMPLETENESS CHECK (do this before writing your final answer): the "Equipment Configuration"
    text is a long paragraph that states a fact for almost every template field, including facts
    near the middle/end of the paragraph — do not stop reading partway through. Go through the
    paragraph sentence by sentence and match each sentence to the template field(s) it answers. A
    field must only be marked "needs_clarification" or "missing" if, after this full read-through,
    you confirm the paragraph truly never states a value for it — not because the fact appeared
    later in a long paragraph and was skipped.
-8. Return ONLY a valid JSON object, no markdown fences, no explanations, in this exact structure:
+9. Return ONLY a valid JSON object, no markdown fences, no explanations, in this exact structure:
 
    {{
      "fields": {{
@@ -147,8 +156,14 @@ Source References: {mentioned_in_text}
 """
 
 
-def fill_template_fields(equipment: dict, field_defs: list) -> dict:
-    field_list_str = "\n".join(f"- {key}: {label}" for key, label in field_defs)
+# Fields per LLM call — a smaller batch means the model has fewer fields to
+# track at once against the (still-full) equipment_definition text, which
+# cuts down on fields getting skipped near the end of a long paragraph.
+FIELD_BATCH_SIZE = 6
+
+
+def _fill_template_fields_batch(equipment: dict, field_defs_batch: list) -> dict:
+    field_list_str = "\n".join(f"- {key}: {label}" for key, label in field_defs_batch)
 
     mentioned_in = equipment.get("mentioned_in", [])
     mentioned_in_text = "; ".join(
@@ -174,9 +189,17 @@ def fill_template_fields(equipment: dict, field_defs: list) -> dict:
         raise e
 
     field_values = result.get("fields", {})
-    for key, _ in field_defs:
+    for key, _ in field_defs_batch:
         field_values.setdefault(key, {"value": None, "status": "missing", "source": None})
 
+    return field_values
+
+
+def fill_template_fields(equipment: dict, field_defs: list) -> dict:
+    field_values = {}
+    for i in range(0, len(field_defs), FIELD_BATCH_SIZE):
+        batch = field_defs[i : i + FIELD_BATCH_SIZE]
+        field_values.update(_fill_template_fields_batch(equipment, batch))
     return field_values
 
 

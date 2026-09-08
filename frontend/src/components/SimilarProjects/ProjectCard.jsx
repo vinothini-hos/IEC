@@ -5,12 +5,12 @@ function scoreTier(score) {
   return "low";
 }
 
-export default function ProjectCard({ result, selected, onSelect }) {
+export default function ProjectCard({ result, onSelect }) {
   const tier = scoreTier(result.relevance_score);
 
   return (
     <div
-      className={`card project-card project-card-${tier}` + (selected ? " selected" : "")}
+      className={`card project-card project-card-${tier}`}
       onClick={onSelect}
       role="button"
       tabIndex={0}

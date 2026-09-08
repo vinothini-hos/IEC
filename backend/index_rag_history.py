@@ -62,7 +62,7 @@ def main():
     texts = []
     entries = []
     for path in json_files:
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data_extraction = json.load(f)
         source_text = rag_text_representation.build_source_text(data_extraction, field_labels)
         texts.append(source_text)
@@ -80,6 +80,8 @@ def main():
                 "fields": data_extraction.get("fields", {}),
                 "key_points": data_extraction.get("key_points", []),
                 "source_text": source_text,
+                "customer_details": data_extraction.get("customer_details"),
+                "boq": data_extraction.get("boq", []),
             },
         )
         print(f"  indexed: {project_id}")
