@@ -18,4 +18,8 @@ openpyxl>=3.1.0
 pandas>=2.2.0
 qdrant-client>=1.10.0
 sentence-transformers>=3.0.0
-torch>=2.0.0
+# Pinned: 2.14.0 gets blocked by Windows Application Control on some machines
+# (DLL load failed while importing _C) — 2.13.0 is a known-good build.
+torch==2.13.0
+rank-bm25>=0.2.2
+fpdf2>=2.8.0

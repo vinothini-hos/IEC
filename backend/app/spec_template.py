@@ -2,7 +2,7 @@
 Fills the blank SO2/CL2 query-sheet templates with the extracted spec values,
 for attaching to the clarification email. Row layout must stay in sync with
 SO2_TEMPLATE_FIELDS / CL2_TEMPLATE_FIELDS in template_consolidation.py — both
-templates list the same 18/20 fields in the same order, starting at row 5,
+templates list the same 24 fields in the same order, starting at row 5,
 with the value going in column D ("Client Input").
 """
 

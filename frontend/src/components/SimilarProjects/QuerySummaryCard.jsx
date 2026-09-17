@@ -3,15 +3,15 @@
 const HEADLINE_FIELD_KEYS = {
   SO2: [
     "design_capacity_kg_hr",
-    "vaporizer_heat_source_available",
-    "installation_indoor_outdoor",
+    "heating_media",
+    "location_installation",
     "instrument_specification",
     "source_of_so2",
   ],
   CL2: [
     "design_capacity_kg_hr",
-    "vaporizer_heat_source_available",
-    "installation_indoor_outdoor",
+    "heating_media",
+    "location_installation",
     "instrument_specification",
     "source_of_cl2",
   ],

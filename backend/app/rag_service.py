@@ -3,11 +3,17 @@ Similar Projects (RAG). For a thread's extracted equipment item, finds the
 most relevant past projects of the same equipment type:
 
   1. Embed the item's spec text locally (BGE-M3, no API key).
-  2. Vector search that equipment type's Qdrant collection for the top N
-     candidates (fast, cheap, approximate).
-  3. Send the item + those candidates to Claude for field-by-field
-     reranking — a refined 0-100 relevance score + justification each.
-  4. Sort by the refined score, return the top K.
+  2. Retrieve two independent rankings of the historical pool:
+       - Dense: Qdrant vector search (meaning-level similarity).
+       - BM25: keyword search over the same corpus (term-level similarity,
+         e.g. "SO2", "steam", "FLP" appearing in both).
+  3. Fuse the two rankings with Reciprocal Rank Fusion (RRF).
+  4. Score field-by-field similarity, weighted so capacity/heating/location
+     matter more than exact temperature/pressure figures.
+  5. Combine the (normalized) RRF score and field-match score via geometric
+     mean into one final similarity score, and take the top K.
+  6. Ask the local LLM to explain (not re-score) why each of those top K
+     is a good match.
 
 Each equipment type (SO2, CL2, ...) has its own fully separate Qdrant
 collection — see rag_vector_store.py.
@@ -16,7 +22,7 @@ collection — see rag_vector_store.py.
 import json
 from pathlib import Path
 
-from . import rag_embedder, rag_reranker, rag_text_representation
+from . import rag_bm25, rag_embedder, rag_field_match, rag_justification, rag_scoring, rag_text_representation
 from .config import settings
 from .rag_vector_store import VectorStore
 from .template_consolidation import get_template_fields
@@ -29,50 +35,86 @@ def _flatten_fields(fields: dict) -> dict:
     return {key: entry.get("value") for key, entry in (fields or {}).items()}
 
 
-def find_similar_projects(equipment_item: dict, top_k: int = 10, candidates: int = 20) -> dict:
+def find_similar_projects(equipment_item: dict, top_k: int = 10) -> dict:
     type_label = equipment_item.get("type_label")
     equipment_name = equipment_item.get("equipment_name", "")
 
     field_defs, _ = get_template_fields(equipment_name)
     field_labels = dict(field_defs) if field_defs else {}
+    new_fields = _flatten_fields(equipment_item.get("fields"))
 
     new_project_text = rag_text_representation.build_source_text(
-        {"fields": _flatten_fields(equipment_item.get("fields")), "key_points": []},
+        {"fields": new_fields, "key_points": []},
         field_labels,
     )
 
     query_vector = rag_embedder.embed_text(new_project_text)
 
-    store = VectorStore(settings.rag_index_dir, vector_dim=rag_embedder.EMBEDDING_DIM)
-    shortlist = store.search(type_label, query_vector, limit=candidates)
+    index_dir = settings.rag_index_sample_dir if settings.rag_use_sample_index else settings.rag_index_dir
+    store = VectorStore(index_dir, vector_dim=rag_embedder.EMBEDDING_DIM)
 
-    if not shortlist:
+    all_payloads = store.get_all_payloads(type_label)
+    if not all_payloads:
         return {
             "equipment_type": type_label,
             "total_candidates_considered": 0,
             "results": [],
             "message": f"No indexed history for equipment type '{type_label}' yet.",
         }
+    payload_by_id = {p["project_id"]: p for p in all_payloads}
 
-    candidates_for_rerank = [
-        {"project_id": c["project_id"], "source_text": c["payload"].get("source_text", "")}
-        for c in shortlist
-    ]
-    reranked = rag_reranker.rerank_candidates(new_project_text, candidates_for_rerank)
+    # --- two independent rankings of the same historical pool ---
+    dense_hits = store.search(type_label, query_vector, limit=settings.rag_dense_pool_size)
+    dense_rank_list = [h["project_id"] for h in dense_hits]
+    vector_score_by_id = {h["project_id"]: h["score"] for h in dense_hits}
 
-    vector_score_by_id = {c["project_id"]: c["score"] for c in shortlist}
-    payload_by_id = {c["project_id"]: c["payload"] for c in shortlist}
+    bm25_hits = rag_bm25.rank(
+        new_project_text,
+        [{"project_id": pid, "source_text": p.get("source_text", "")} for pid, p in payload_by_id.items()],
+    )[: settings.rag_bm25_pool_size]
+    bm25_rank_list = [h["project_id"] for h in bm25_hits]
+
+    candidate_ids = set(dense_rank_list) | set(bm25_rank_list)
+    dense_rank_by_id = {pid: i + 1 for i, pid in enumerate(dense_rank_list)}
+    bm25_rank_by_id = {pid: i + 1 for i, pid in enumerate(bm25_rank_list)}
+
+    # --- fuse rank position (RRF) and field-level similarity separately ---
+    rrf_scores = rag_scoring.reciprocal_rank_fusion(
+        [dense_rank_list, bm25_rank_list], k=settings.rag_rrf_k
+    )
+    field_match_scores = {
+        pid: rag_field_match.field_match_score(new_fields, payload_by_id[pid].get("fields", {}))
+        for pid in candidate_ids
+    }
+
+    rrf_norm = rag_scoring.normalize({pid: rrf_scores.get(pid, 0.0) for pid in candidate_ids})
+    field_match_norm = rag_scoring.normalize(field_match_scores)
+    final_scores = {
+        pid: rag_scoring.geometric_mean(rrf_norm[pid], field_match_norm[pid]) for pid in candidate_ids
+    }
+
+    ranked_ids = sorted(candidate_ids, key=lambda pid: final_scores[pid], reverse=True)[:top_k]
+
+    # --- LLM explains the already-decided top K, doesn't re-score them ---
+    justifications = rag_justification.generate_justifications(
+        new_project_text,
+        [{"project_id": pid, "source_text": payload_by_id[pid].get("source_text", "")} for pid in ranked_ids],
+    )
 
     results = []
-    for r in reranked:
-        pid = r.get("project_id")
-        payload = payload_by_id.get(pid, {})
+    for pid in ranked_ids:
+        payload = payload_by_id[pid]
         raw_fields = payload.get("fields", {})
         results.append({
             "project_id": pid,
-            "relevance_score": r.get("relevance_score"),
-            "justification": r.get("justification"),
+            "relevance_score": round(final_scores[pid] * 100, 2),
+            "justification": justifications.get(pid, ""),
             "vector_similarity": round(vector_score_by_id.get(pid, 0.0), 4),
+            "dense_rank": dense_rank_by_id.get(pid),
+            "bm25_rank": bm25_rank_by_id.get(pid),
+            "rrf_score": round(rrf_scores.get(pid, 0.0), 6),
+            "field_match_score": round(field_match_scores.get(pid, 0.0), 4),
+            "final_score": round(final_scores[pid] * 100, 2),
             "fields": {
                 key: {"label": field_labels.get(key, key), "value": value}
                 for key, value in raw_fields.items()
@@ -84,12 +126,10 @@ def find_similar_projects(equipment_item: dict, top_k: int = 10, candidates: int
             "boq": payload.get("boq", []),
         })
 
-    results.sort(key=lambda r: r.get("relevance_score") or 0, reverse=True)
-
     return {
         "equipment_type": type_label,
-        "total_candidates_considered": len(shortlist),
-        "results": results[:top_k],
+        "total_candidates_considered": len(candidate_ids),
+        "results": results,
     }
 
 

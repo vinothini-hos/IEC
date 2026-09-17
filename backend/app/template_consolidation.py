@@ -20,56 +20,112 @@ from .llm_client import call_llm
 # ---------------------------------------------------------------------------
 
 SO2_TEMPLATE_FIELDS = [
+    ("description", "Description"),
+    ("qty", "Qty - No's"),
+    ("location_installation", "Location (Installation)"),
+    ("system_bolt_down_location", "System bolt down location - Site Location"),
+    ("winter_min_max_temperature", "Minimum and Maximum temperature during winter season? - deg C"),
+    ("application", "Application"),
+    ("orientation", "Orientation"),
     ("design_capacity_kg_hr", "Design Capacity - kg/hr"),
-    ("system_bolt_down_location", "System bolt down location"),
-    ("winter_min_max_temperature", "Minimum and Maximum temperature during winter season"),
     ("source_of_so2", "Source of SO2"),
     ("inlet_liquid_so2_temperature_c", "Inlet Liquid SO2 Temperature - deg C"),
     ("inlet_liquid_so2_pressure_barg", "Inlet Liquid SO2 Pressure - bar (g)"),
-    ("so2_pressure_at_vaporizer_outlet_reactor_inlet_barg",
-     "SO2 Pressure required @ vaporizer gas outlet / Reactor inlet - bar (g)"),
-    ("so2_temperature_at_vaporizer_outlet_reactor_inlet_c",
-     "SO2 Temperature required @ vaporizer gas outlet / Reactor inlet - deg C"),
-    ("so2_carrier_pipeline_length",
-     "Approximate Length of SO2 carrier pipeline from SO2 shed to process"),
-    ("vaporizer_heat_source_available", "Vaporizer Heat Source available"),
-    ("available_inlet_steam_pressure", "Available inlet Steam pressure"),
+    ("so2_pressure_at_vaporizer_outlet_barg",
+     "SO2 Pressure required @ vaporizer gas outlet - bar (g)"),
+    ("so2_temperature_at_vaporizer_outlet_c",
+     "SO2 Temperature required @ vaporizer gas outlet - deg C"),
+    ("heating_media", "Heating media"),
+    ("heating_fluid", "Heating Fluid"),
     ("no_of_tonners_connected", "No. of tonners connected to the vaporizer system"),
+    ("tonner_manifold_arrangement_required", "Tonner Manifold arrangement required / Not required"),
+    ("tonner_manifold_working_standby_count",
+     "If required provide No. of tonners working & standby"),
     ("instrument_specification", "Instrument Specification (FLP or Non-FLP)"),
     ("electrical_panel_specification", "Electrical Panel Specification (FLP or Non-FLP)"),
-    ("installation_indoor_outdoor", "Installation - Indoor or Outdoor?"),
+    ("area_classification", "Area classification - Hazardous or Non-Hazardous?"),
     ("scope_bare_or_complete_skid",
      "Bare vaporizer / Complete skid system with all instruments & Controls"),
-    ("site_layout_provided", "Provide Site layout"),
+    ("site_layout_provided", "Provide site layout / Flow Scheme"),
     ("tentative_finalization_month_year", "Tentative Month / Year of Finalization"),
 ]
 
 CL2_TEMPLATE_FIELDS = [
+    ("description", "Description"),
+    ("qty", "Qty - No's"),
+    ("location_installation", "Location (Installation)"),
+    ("system_bolt_down_location", "System bolt down location - Site Location"),
+    ("winter_min_max_temperature", "Minimum and Maximum temperature during winter season? - deg C"),
+    ("application", "Application"),
+    ("orientation", "Orientation"),
     ("design_capacity_kg_hr", "Design Capacity - kg/hr"),
-    ("system_bolt_down_location", "System bolt down location"),
-    ("winter_min_max_temperature", "Minimum and Maximum temperature during winter season"),
-    ("source_of_cl2", "Source of Cl2"),
-    ("inlet_liquid_cl2_temperature_c", "Inlet Liquid Cl2 Temperature - deg C"),
-    ("inlet_liquid_cl2_pressure_barg", "Inlet Liquid Cl2 Pressure - bar (g)"),
-    ("cl2_pressure_at_vaporizer_outlet_reactor_inlet_barg",
-     "Cl2 Pressure required @ vaporizer gas outlet / Reactor inlet - bar (g)"),
-    ("cl2_temperature_at_vaporizer_outlet_reactor_inlet_c",
-     "Cl2 Temperature required @ vaporizer gas outlet / Reactor inlet - deg C"),
-    ("cl2_carrier_pipeline_length",
-     "Approximate Length of Cl2 carrier pipeline from Cl2 shed to process"),
-    ("vaporizer_heat_source_available", "Vaporizer Heat Source available"),
-    ("available_inlet_steam_pressure", "Available inlet Steam pressure"),
+    ("source_of_cl2", "Source of Chlorine"),
+    ("inlet_liquid_cl2_temperature_c", "Inlet Liquid Chlorine Temperature - deg C"),
+    ("inlet_liquid_cl2_pressure_barg", "Inlet Liquid Chlorine Pressure - bar (g)"),
+    ("cl2_pressure_at_vaporizer_outlet_barg",
+     "Chlorine Pressure required @ vaporizer gas outlet - bar (g)"),
+    ("cl2_temperature_at_vaporizer_outlet_c",
+     "Chlorine Temperature required @ vaporizer gas outlet - deg C"),
+    ("heating_media", "Heating media"),
+    ("heating_fluid", "Heating Fluid"),
     ("no_of_tonners_connected", "No. of tonners connected to the vaporizer system"),
+    ("tonner_manifold_arrangement_required", "Tonner Manifold arrangement required / Not required"),
+    ("tonner_manifold_working_standby_count",
+     "If required provide No. of tonners working & standby"),
     ("instrument_specification", "Instrument Specification (FLP or Non-FLP)"),
     ("electrical_panel_specification", "Electrical Panel Specification (FLP or Non-FLP)"),
-    ("installation_indoor_outdoor", "Installation - Indoor or Outdoor?"),
+    ("area_classification", "Area classification - Hazardous or Non-Hazardous?"),
     ("scope_bare_or_complete_skid",
      "Bare vaporizer / Complete skid system with all instruments & Controls"),
-    ("site_layout_provided", "Provide Site layout"),
+    ("site_layout_provided", "Provide site layout / Flow Scheme"),
     ("tentative_finalization_month_year", "Tentative Month / Year of Finalization"),
-    ("cl2_scrubber_required", "Cl2 Gas Scrubber required (Yes/No)"),
-    ("cl2_purity_moisture_spec", "Chlorine purity / moisture content specification"),
 ]
+
+
+# Per-field guidance for the LLM extraction prompt only — not shown to users
+# and not used by spec_template.py's row-fill (which relies on field order,
+# not this text). Clarifies what counts as an answer for fields whose label
+# alone is ambiguous, to cut down on the local model skipping or
+# misinterpreting them.
+FIELD_HINTS = {
+    # "description" is deliberately absent — it's set directly from
+    # equipment_name in fill_template_fields(), never sent to the LLM.
+    "qty": "How many units of this equipment are needed.",
+    "location_installation": "Whether the equipment will be installed indoor or outdoor.",
+    "system_bolt_down_location": "The site/area name where the equipment will be bolted down.",
+    "winter_min_max_temperature": "The minimum and maximum ambient temperature expected during the winter season.",
+    "application": "The name of the chemical/process this vaporizer is used for.",
+    "orientation": "The equipment's orientation, e.g. bayonet (vertical) or horizontal.",
+    "design_capacity_kg_hr": "The equipment's rated design capacity.",
+    "source_of_so2": "Where the SO2 comes from — tonner or cylinder.",
+    "source_of_cl2": "Where the chlorine comes from — tonner or cylinder.",
+    "inlet_liquid_so2_temperature_c": "The inlet liquid SO2 temperature — may be stated as ambient / "
+        "room temperature / normal, or as an explicit figure in the attachment or email body.",
+    "inlet_liquid_cl2_temperature_c": "The inlet liquid chlorine temperature — may be stated as ambient / "
+        "room temperature / normal, or as an explicit figure in the attachment or email body.",
+    "inlet_liquid_so2_pressure_barg": "The inlet liquid SO2 pressure — based on the source pressure or a "
+        "controlled/regulated pressure.",
+    "inlet_liquid_cl2_pressure_barg": "The inlet liquid chlorine pressure — based on the source pressure or a "
+        "controlled/regulated pressure.",
+    "so2_pressure_at_vaporizer_outlet_barg": "The output gas pressure required from the vaporizer.",
+    "cl2_pressure_at_vaporizer_outlet_barg": "The output gas pressure required from the vaporizer.",
+    "so2_temperature_at_vaporizer_outlet_c": "The output gas temperature required from the vaporizer.",
+    "cl2_temperature_at_vaporizer_outlet_c": "The output gas temperature required from the vaporizer.",
+    "heating_media": "The vaporizer's heat source method, e.g. steam or electric heater.",
+    "heating_fluid": "The heating fluid used, e.g. steam, water, or oil.",
+    "no_of_tonners_connected": "The number of tonners connected to the vaporizer system.",
+    "tonner_manifold_arrangement_required": "Whether a tonner manifold arrangement is required or not.",
+    "tonner_manifold_working_standby_count": "If a manifold arrangement is required, the number of tonners "
+        "working vs. on standby.",
+    "instrument_specification": "Whether instruments must be FLP (flame-proof) or Non-FLP.",
+    "electrical_panel_specification": "Whether the electrical panel must be FLP (flame-proof) or Non-FLP.",
+    "area_classification": "Whether the installation area is Hazardous or Non-Hazardous.",
+    "scope_bare_or_complete_skid": "Whether the scope is a bare vaporizer, or a complete skid system with all "
+        "instruments & controls.",
+    "site_layout_provided": "Whether a site layout / flow scheme has been provided (Yes/No).",
+    "tentative_finalization_month_year": "The tentative month/year by which the order is expected to be "
+        "finalized.",
+}
 
 
 def get_template_fields(equipment_name: str):
@@ -163,12 +219,23 @@ FIELD_BATCH_SIZE = 6
 
 
 def _fill_template_fields_batch(equipment: dict, field_defs_batch: list) -> dict:
-    field_list_str = "\n".join(f"- {key}: {label}" for key, label in field_defs_batch)
+    field_list_str = "\n".join(
+        f"- {key}: {label}" + (f" ({FIELD_HINTS[key]})" if key in FIELD_HINTS else "")
+        for key, label in field_defs_batch
+    )
 
+    # The local Qwen3/Ollama extraction model doesn't always follow the
+    # nested {"document_name", "document_location"} schema as reliably as
+    # Claude did — sometimes returning a plain string per entry instead.
+    # Handle both shapes rather than assuming dicts.
     mentioned_in = equipment.get("mentioned_in", [])
-    mentioned_in_text = "; ".join(
-        f"{m.get('document_name', '')} ({m.get('document_location', '')})" for m in mentioned_in
-    ) or "(none provided)"
+    mentioned_in_parts = []
+    for m in mentioned_in:
+        if isinstance(m, dict):
+            mentioned_in_parts.append(f"{m.get('document_name', '')} ({m.get('document_location', '')})")
+        else:
+            mentioned_in_parts.append(str(m))
+    mentioned_in_text = "; ".join(mentioned_in_parts) or "(none provided)"
 
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         equipment_name=equipment.get("equipment_name", ""),
@@ -188,17 +255,45 @@ def _fill_template_fields_batch(equipment: dict, field_defs_batch: list) -> dict
         print("Raw output was:\n", raw_text, file=sys.stderr)
         raise e
 
-    field_values = result.get("fields", {})
+    # The local Qwen3/Ollama model sometimes shortcuts the requested
+    # {"value", "status", "source"} object and returns a bare string/number
+    # for a field instead — normalize so every entry is the expected shape
+    # before it reaches _has_real_value() and friends.
+    raw_field_values = result.get("fields", {})
+    field_values = {}
     for key, _ in field_defs_batch:
-        field_values.setdefault(key, {"value": None, "status": "missing", "source": None})
+        entry = raw_field_values.get(key)
+        if isinstance(entry, dict):
+            field_values[key] = entry
+        elif entry not in (None, ""):
+            field_values[key] = {"value": str(entry), "status": "confirmed", "source": None}
+        else:
+            field_values[key] = {"value": None, "status": "missing", "source": None}
 
     return field_values
 
 
 def fill_template_fields(equipment: dict, field_defs: list) -> dict:
     field_values = {}
-    for i in range(0, len(field_defs), FIELD_BATCH_SIZE):
-        batch = field_defs[i : i + FIELD_BATCH_SIZE]
+
+    # "description" always means the equipment's name, which is already
+    # known directly from stage-1 extraction — set it deterministically
+    # instead of asking the LLM, which tended to copy the whole
+    # equipment_definition paragraph in instead of just the name.
+    llm_field_defs = []
+    for key, label in field_defs:
+        if key == "description":
+            equipment_name = equipment.get("equipment_name") or None
+            field_values["description"] = {
+                "value": equipment_name,
+                "status": "confirmed" if equipment_name else "missing",
+                "source": None,
+            }
+        else:
+            llm_field_defs.append((key, label))
+
+    for i in range(0, len(llm_field_defs), FIELD_BATCH_SIZE):
+        batch = llm_field_defs[i : i + FIELD_BATCH_SIZE]
         field_values.update(_fill_template_fields_batch(equipment, batch))
     return field_values
 
@@ -257,7 +352,7 @@ def _safe_filename(text: str, max_len: int = 60) -> str:
 
 def _classification_label(equipment_name: str, fields: dict) -> str:
     parts = [equipment_name]
-    heat = fields.get("vaporizer_heat_source_available", {}).get("value")
+    heat = fields.get("heating_media", {}).get("value")
     if heat:
         # Field values are often a full sentence with parenthetical detail
         # (e.g. "Steam (existing header available near...)") — only use it
@@ -271,7 +366,9 @@ def _classification_label(equipment_name: str, fields: dict) -> str:
 
 
 def _has_real_value(entry: dict) -> bool:
-    return (entry or {}).get("status") in ("confirmed", "needs_review") and entry.get("value") not in (
+    if not isinstance(entry, dict):
+        return False
+    return entry.get("status") in ("confirmed", "needs_review") and entry.get("value") not in (
         None,
         "",
     )

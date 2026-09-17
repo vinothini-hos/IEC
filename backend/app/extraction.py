@@ -57,21 +57,24 @@ def extract_text_from_docx(path: str) -> str:
 
 
 def extract_text_from_excel(path: str) -> str:
+    import json
+
     import pandas as pd
 
-    chunks = []
     ext = Path(path).suffix.lower()
 
     if ext == ".csv":
-        df = pd.read_csv(path)
-        chunks.append(f"--- Sheet: CSV ---\n{df.to_string(index=True)}")
+        all_sheets = {"CSV": pd.read_csv(path)}
     else:
-        xls = pd.ExcelFile(path)
-        for sheet_name in xls.sheet_names:
-            df = xls.parse(sheet_name)
-            chunks.append(f"--- Sheet: {sheet_name} ---\n{df.to_string(index=True)}")
+        all_sheets = pd.read_excel(path, sheet_name=None)  # dict {sheet_name: df}
 
-    return "\n\n".join(chunks)
+    result = {}
+    for sheet_name, df in all_sheets.items():
+        # Drop fully empty rows that sometimes cause messy output
+        df = df.dropna(how="all")
+        result[sheet_name] = df.to_dict(orient="records")
+
+    return json.dumps(result, indent=2, ensure_ascii=False, default=str)
 
 
 def extract_text_from_attachment(path: str) -> str:
@@ -265,7 +268,12 @@ def call_claude_for_extraction(email_body: str, attachments: list) -> list:
     )
     system_prompt = SYSTEM_PROMPT.format(knowledge_base=EQUIPMENT_KNOWLEDGE_BASE)
 
-    raw_text = call_llm(system_prompt, user_prompt)
+    raw_text = call_llm(
+        system_prompt,
+        user_prompt,
+        log_label="specification",
+        log_user_prompt_parts={"email_body": email_body or "(empty)", "attachments": attachments_text},
+    )
     cleaned = raw_text.replace("```json", "").replace("```", "").strip()
 
     try:
@@ -304,7 +312,11 @@ def extract_specification_for_thread(thread) -> list:
     """Given a Thread ORM object (with .emails and .emails[*].attachments loaded),
     concatenate every message + downloaded attachment and run the Claude extraction."""
     emails_sorted = sorted(thread.emails, key=lambda e: e.sent_at)
-    email_body = "\n\n".join(_format_email_for_prompt(e) for e in emails_sorted)
+
+    # Email body is temporarily left out of the prompt — attachments only
+    # for now. Restore the line below (join of _format_email_for_prompt per
+    # email) to bring the email body back in.
+    email_body = ""
 
     attachments = []
     for email in emails_sorted:

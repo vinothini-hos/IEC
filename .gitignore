@@ -7,3 +7,4 @@ __pycache__/
 backend/credentials/
 backend/storage/
 backend/rag_history/
+backend/sample_data/
