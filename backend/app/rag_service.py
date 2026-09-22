@@ -20,6 +20,7 @@ collection — see rag_vector_store.py.
 """
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 from . import rag_bm25, rag_embedder, rag_field_match, rag_justification, rag_scoring, rag_text_representation
@@ -134,8 +135,13 @@ def find_similar_projects(equipment_item: dict, top_k: int = 10) -> dict:
 
 
 def save_similar_projects_result(thread_id, equipment_index: int, result: dict) -> str:
+    """Writes a new timestamped file per run (full history kept) rather than
+    overwriting - see routers/specification.py's GET endpoint, which reads
+    the most recently written file for this equipment_index back."""
     out_dir = Path(settings.similar_projects_storage_dir) / str(thread_id)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{equipment_index}_{result.get('equipment_type') or 'unknown'}.json"
+    timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
+    prefix = f"{equipment_index}_{result.get('equipment_type') or 'unknown'}"
+    out_path = out_dir / f"{prefix}-{timestamp}-{thread_id}.json"
     out_path.write_text(json.dumps(result, indent=2))
     return str(out_path)

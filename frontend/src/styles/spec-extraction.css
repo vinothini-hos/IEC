@@ -251,6 +251,7 @@
   flex: 0 0 44%;
   font-size: 12.5px;
   color: var(--color-text-muted);
+  white-space: pre-line;
 }
 
 .spec-field-value {
@@ -259,6 +260,7 @@
   font-weight: 600;
   color: var(--color-text);
   line-height: 1.4;
+  white-space: pre-line;
 }
 
 .spec-field-icon {
@@ -274,7 +276,29 @@
   color: #b45309;
 }
 .spec-field-missing .spec-field-icon {
-  color: var(--color-text-faint);
+  color: #b91c1c;
+}
+
+/* Missing / needs-clarification fields are highlighted across the whole
+   row — both the specification label and the Client Input value, not just
+   the icon — so a gap in the extracted spec is obvious at a glance. A
+   confirmed answer (e.g. "Not required") stays in the normal style above. */
+.spec-field-needs_review,
+.spec-field-needs_clarification {
+  background: #fffbeb;
+}
+.spec-field-needs_review .spec-field-label,
+.spec-field-needs_review .spec-field-value,
+.spec-field-needs_clarification .spec-field-label,
+.spec-field-needs_clarification .spec-field-value {
+  color: #b45309;
+}
+.spec-field-missing {
+  background: #fef2f2;
+}
+.spec-field-missing .spec-field-label,
+.spec-field-missing .spec-field-value {
+  color: #b91c1c;
 }
 
 /* ---------- Clarification card ---------- */

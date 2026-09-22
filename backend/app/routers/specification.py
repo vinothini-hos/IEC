@@ -12,6 +12,20 @@ from ..database import get_db
 router = APIRouter(prefix="/api/threads", tags=["specification"])
 
 
+def _find_latest_file(out_dir: Path, prefix: str):
+    """Return the most recently written storage/ file matching
+    <prefix>-<timestamp>-<thread_id>.json, or None if there isn't one yet.
+    Uses mtime rather than parsing the embedded timestamp, since the
+    DDMMYYYY_HHMMSS format doesn't sort correctly lexicographically across
+    month boundaries."""
+    if not out_dir.is_dir():
+        return None
+    candidates = list(out_dir.glob(f"{prefix}-*.json"))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
 @router.get("/{thread_id}/specification")
 def get_specification(thread_id: uuid.UUID, db: Session = Depends(get_db)):
     thread = db.query(models.Thread).filter_by(id=thread_id).first()
@@ -91,12 +105,9 @@ def get_similar_projects(thread_id: uuid.UUID, equipment_index: int = 0, db: Ses
         if 0 <= equipment_index < len(items):
             type_label = items[equipment_index].get("type_label")
 
-    path = (
-        Path(settings.similar_projects_storage_dir)
-        / str(thread_id)
-        / f"{equipment_index}_{type_label or 'unknown'}.json"
-    )
-    if not path.exists():
+    out_dir = Path(settings.similar_projects_storage_dir) / str(thread_id)
+    path = _find_latest_file(out_dir, f"{equipment_index}_{type_label or 'unknown'}")
+    if path is None:
         return {"result": None}
     return {"result": json.loads(path.read_text())}
 

@@ -10,6 +10,7 @@ clarification email draft when mandatory info is missing.
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from .config import settings
@@ -38,8 +39,8 @@ SO2_TEMPLATE_FIELDS = [
     ("heating_media", "Heating media"),
     ("heating_fluid", "Heating Fluid"),
     ("no_of_tonners_connected", "No. of tonners connected to the vaporizer system"),
-    ("tonner_manifold_arrangement_required", "Tonner Manifold arrangement required / Not required"),
-    ("tonner_manifold_working_standby_count",
+    ("tonner_manifold_arrangement_required",
+     "Tonner Manifold arrangement required / Not required\n"
      "If required provide No. of tonners working & standby"),
     ("instrument_specification", "Instrument Specification (FLP or Non-FLP)"),
     ("electrical_panel_specification", "Electrical Panel Specification (FLP or Non-FLP)"),
@@ -69,8 +70,8 @@ CL2_TEMPLATE_FIELDS = [
     ("heating_media", "Heating media"),
     ("heating_fluid", "Heating Fluid"),
     ("no_of_tonners_connected", "No. of tonners connected to the vaporizer system"),
-    ("tonner_manifold_arrangement_required", "Tonner Manifold arrangement required / Not required"),
-    ("tonner_manifold_working_standby_count",
+    ("tonner_manifold_arrangement_required",
+     "Tonner Manifold arrangement required / Not required\n"
      "If required provide No. of tonners working & standby"),
     ("instrument_specification", "Instrument Specification (FLP or Non-FLP)"),
     ("electrical_panel_specification", "Electrical Panel Specification (FLP or Non-FLP)"),
@@ -114,11 +115,23 @@ FIELD_HINTS = {
     "heating_media": "The vaporizer's heat source method, e.g. steam or electric heater.",
     "heating_fluid": "The heating fluid used, e.g. steam, water, or oil.",
     "no_of_tonners_connected": "The number of tonners connected to the vaporizer system.",
-    "tonner_manifold_arrangement_required": "Whether a tonner manifold arrangement is required or not.",
-    "tonner_manifold_working_standby_count": "If a manifold arrangement is required, the number of tonners "
-        "working vs. on standby.",
-    "instrument_specification": "Whether instruments must be FLP (flame-proof) or Non-FLP.",
-    "electrical_panel_specification": "Whether the electrical panel must be FLP (flame-proof) or Non-FLP.",
+    "tonner_manifold_arrangement_required": "This is ONE combined field covering both whether a tonner "
+        "manifold arrangement is required, AND (if it is) the working/standby tonner count - do not treat "
+        "them as two separate questions. If the source says a manifold is NOT required, that is a complete "
+        "answer on its own: value = \"Not required\", status = \"confirmed\" (no working/standby detail is "
+        "needed or expected in that case). If the source says a manifold IS required, include the "
+        "working/standby split in the value when it's stated, e.g. \"Required - Working: 2, Standby: 1\". "
+        "If it's required but the source never states the working/standby split, still record the stated "
+        "part (value = \"Required\") but mark status \"needs_clarification\", since that split is still "
+        "needed from the customer.",
+    "instrument_specification": "Whether instruments must be flame-proof or not. Output the value as the "
+        "single word \"FLP\" (flame-proof) or the single word \"Non-FLP\" — nothing else added, no "
+        "parenthetical, no spelled-out meaning. If the source describes it in other words (e.g. "
+        "\"flameproof instrumentation\"), still output only \"FLP\".",
+    "electrical_panel_specification": "Whether the electrical panel must be flame-proof or not. Output the "
+        "value as the single word \"FLP\" (flame-proof) or the single word \"Non-FLP\" — nothing else "
+        "added, no parenthetical, no spelled-out meaning. If the source describes it in other words (e.g. "
+        "\"flameproof panel\"), still output only \"FLP\".",
     "area_classification": "Whether the installation area is Hazardous or Non-Hazardous.",
     "scope_bare_or_complete_skid": "Whether the scope is a bare vaporizer, or a complete skid system with all "
         "instruments & controls.",
@@ -258,7 +271,7 @@ def _fill_template_fields_batch(equipment: dict, field_defs_batch: list) -> dict
     # The local Qwen3/Ollama model sometimes shortcuts the requested
     # {"value", "status", "source"} object and returns a bare string/number
     # for a field instead — normalize so every entry is the expected shape
-    # before it reaches _has_real_value() and friends.
+    # before it reaches has_real_value() and friends.
     raw_field_values = result.get("fields", {})
     field_values = {}
     for key, _ in field_defs_batch:
@@ -365,7 +378,12 @@ def _classification_label(equipment_name: str, fields: dict) -> str:
     return " · ".join(parts)
 
 
-def _has_real_value(entry: dict) -> bool:
+def has_real_value(entry: dict) -> bool:
+    """True if this field entry has an actual stated answer - "confirmed"/
+    "needs_review" with a non-empty value - as opposed to "missing"/
+    "needs_clarification", which always carry value=None. Public because
+    spec_template.py reuses it to decide which Client Input cells to
+    highlight in the generated Excel."""
     if not isinstance(entry, dict):
         return False
     return entry.get("status") in ("confirmed", "needs_review") and entry.get("value") not in (
@@ -374,22 +392,36 @@ def _has_real_value(entry: dict) -> bool:
     )
 
 
+def _find_latest_file(out_dir: Path, prefix: str):
+    """Return the most recently written storage/ file matching
+    <prefix>-<timestamp>-<thread_id>.json, or None if there isn't one yet.
+    Uses mtime rather than parsing the embedded timestamp, since the
+    DDMMYYYY_HHMMSS format doesn't sort correctly lexicographically across
+    month boundaries."""
+    candidates = list(out_dir.glob(f"{prefix}-*.json"))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
 def run_data_extraction_for_thread(thread, requested_equipments: list) -> list:
     """For each requested_equipment entry, fill its template, classify field
     statuses, build a clarification draft if needed, and write it to
-    storage/data_extraction/{thread_id}/<idx>_<type>_<name>.json — one
-    stable file per equipment item, updated in place on every re-extraction
-    rather than replaced wholesale: a field only overwrites its previous
-    value when this run actually found one, so a run where the model
+    storage/data_extraction/{thread_id}/<idx>_<type>_<name>-<timestamp>-
+    <thread_id>.json — every re-extraction writes a new timestamped file
+    (full history kept) rather than overwriting; a field only overwrites its
+    previous value when this run actually found one (read from the latest
+    existing file for that equipment slot), so a run where the model
     temporarily misses a field doesn't erase a previously confirmed value.
 
     Returns the "equipment_items" list stored on Thread.extraction_result.
     """
     out_dir = Path(settings.data_extraction_storage_dir) / str(thread.id)
     out_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
 
     equipment_items = []
-    written_filenames = set()
+    written_prefixes = set()
     for idx, equipment in enumerate(requested_equipments, start=1):
         equipment_name = equipment.get("equipment_name", "Unknown Equipment")
         field_defs, type_label = get_template_fields(equipment_name)
@@ -398,12 +430,13 @@ def run_data_extraction_for_thread(thread, requested_equipments: list) -> list:
 
         field_values = fill_template_fields(equipment, field_defs)
 
-        filename = f"{idx:02d}_{type_label}_{_safe_filename(equipment_name)}.json"
-        out_path = out_dir / filename
+        prefix = f"{idx:02d}_{type_label}_{_safe_filename(equipment_name)}"
+        written_prefixes.add(prefix)
+        previous_path = _find_latest_file(out_dir, prefix)
         previous_fields = {}
-        if out_path.exists():
+        if previous_path is not None:
             try:
-                previous_fields = json.loads(out_path.read_text()).get("fields", {})
+                previous_fields = json.loads(previous_path.read_text()).get("fields", {})
             except (json.JSONDecodeError, OSError):
                 previous_fields = {}
 
@@ -412,7 +445,7 @@ def run_data_extraction_for_thread(thread, requested_equipments: list) -> list:
         needs_clarification_labels = []
         for key, label in field_defs:
             entry = field_values.get(key) or {"value": None, "status": "missing", "source": None}
-            if not _has_real_value(entry) and _has_real_value(previous_fields.get(key)):
+            if not has_real_value(entry) and has_real_value(previous_fields.get(key)):
                 entry = previous_fields[key]
             status = entry.get("status", "missing")
             fields[key] = {
@@ -443,13 +476,14 @@ def run_data_extraction_for_thread(thread, requested_equipments: list) -> list:
             ),
         }
         equipment_items.append(item)
+        out_path = out_dir / f"{prefix}-{timestamp}-{thread.id}.json"
         out_path.write_text(json.dumps(item, indent=2))
-        written_filenames.add(filename)
 
-    # Remove files for equipment that no longer appears in this run's
-    # extraction (genuinely dropped, not just temporarily missed).
+    # Remove every historical file for equipment that no longer appears in
+    # this run's extraction (genuinely dropped, not just temporarily
+    # missed) - equipment still present keeps its full timestamped history.
     for old_file in out_dir.glob("*.json"):
-        if old_file.name not in written_filenames:
+        if not any(old_file.name.startswith(p + "-") for p in written_prefixes):
             old_file.unlink()
 
     return equipment_items

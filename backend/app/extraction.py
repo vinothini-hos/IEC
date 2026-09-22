@@ -9,11 +9,15 @@ local Ollama model (see llm_client.py).
 """
 
 import json
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from .config import settings
 from .llm_client import call_llm
+from .sheet_consolidation import consolidate_workbook_sheets, safe_filename
+from .structure_mapping import build_cell_structure, resolve_cell_structure
 
 # ---------------------------------------------------------------------------
 # Attachment text extraction (PDF / DOCX / XLSX / CSV)
@@ -239,6 +243,11 @@ FIELD DEFINITIONS:
   heating type."). Never output raw key-value pairs, bullet points, or pipe/table-style formatting
   in this field. It is fine (expected, for a detailed spec sheet) for this paragraph to run several
   sentences long in order to cover every parameter.
+  VERBATIM ABBREVIATIONS/CODES: writing this as flowing prose does NOT mean explaining or expanding
+  technical abbreviations, codes, or shorthand (e.g. "FLP", "Non-FLP", "MOC", a model/tag number).
+  Reproduce them exactly as they appear in the source, as-is, inside your sentence, with no added
+  parenthetical guessing at what the letters stand for. You do not know, and are not being asked,
+  what any such abbreviation expands to — leave it exactly as written in the source.
   If no configuration detail is mentioned at all, write a short sentence such as "No specific
   configuration was mentioned for this item." rather than leaving it blank or inserting the
   generic definition.
@@ -300,6 +309,162 @@ def call_claude_for_extraction(email_body: str, attachments: list) -> list:
 # ---------------------------------------------------------------------------
 
 
+def _extract_structured_excel_text(thread_id, attachment):
+    """For an xlsx/xlsm attachment: consolidate its sheets to raw per-cell
+    JSON, and also deterministically map each sheet's cell structure and
+    resolve it into human-readable JSON (see structure_mapping.py) purely
+    for storage/debugging. The LLM's prompt text is built from the RAW
+    per-cell JSON itself, not the structured JSON - the model reads raw
+    cell coordinates/values directly and derives the requirement box
+    itself, rather than working from our pre-resolved structure.
+
+    Returns (prompt_text, raw_sheets) - raw_sheets is a list of
+    (raw_data, label_refs) pairs, one per sheet, used afterwards to verify
+    the LLM's equipment_definition didn't drop any cell value. label_refs
+    (cell refs that CELL_STRUCTURE used as a label/header, not a value -
+    see _label_and_value_refs) is still derived from the deterministic
+    structure-mapping pass even though that structure is no longer what
+    the LLM reads, purely so the completeness check below can tell a field
+    NAME cell apart from a data VALUE cell and only flag genuinely dropped
+    values, not paraphrased labels - see _ensure_definition_completeness."""
+    raw_dir = Path(settings.sheet_consolidation_storage_dir) / str(thread_id) / str(attachment.id)
+    structured_dir = Path(settings.structured_sheets_storage_dir) / str(thread_id) / str(attachment.id)
+
+    # Every file this function writes is named <filename>-<timestamp>-<thread_id>.json
+    # so any file in storage/ can be identified (what it is, when it was
+    # generated, which thread it belongs to) from its name alone.
+    timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
+    suffix = f"-{timestamp}-{thread_id}"
+
+    raw_paths = consolidate_workbook_sheets(attachment.local_path, str(raw_dir), filename_suffix=suffix)
+    structured_dir.mkdir(parents=True, exist_ok=True)
+
+    sheet_texts = []
+    raw_sheets = []
+    for raw_path in raw_paths:
+        raw_data = json.loads(Path(raw_path).read_text(encoding="utf-8"))
+
+        cell_structure, diagnostics = build_cell_structure(raw_data)
+        structured = resolve_cell_structure(raw_data, cell_structure)
+        raw_sheets.append((raw_data, _label_and_value_refs(cell_structure)))
+
+        sheet_label = safe_filename(raw_data.get("sheet_name", "sheet"))
+
+        cell_structure_json = json.dumps(cell_structure, indent=2, ensure_ascii=False, default=str)
+        (structured_dir / f"{sheet_label}_cell_structure{suffix}.json").write_text(cell_structure_json, encoding="utf-8")
+
+        structured_json = json.dumps(structured, indent=2, ensure_ascii=False, default=str)
+        (structured_dir / f"{sheet_label}_structured{suffix}.json").write_text(structured_json, encoding="utf-8")
+
+        if diagnostics.get("warnings"):
+            (structured_dir / f"{sheet_label}_warnings{suffix}.json").write_text(
+                json.dumps(diagnostics, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+
+        raw_json_text = json.dumps(raw_data, indent=2, ensure_ascii=False, default=str)
+        sheet_texts.append(f"--- Sheet: {raw_data.get('sheet_name')} (raw cells) ---\n{raw_json_text}")
+
+    return "\n\n".join(sheet_texts), raw_sheets
+
+
+# ---------------------------------------------------------------------------
+# Deterministic completeness pass: the Stage 1 LLM call is asked to write an
+# "exhaustive" equipment_definition prose paragraph, but a local/quantized
+# model can still silently drop or merge values on a dense spec sheet. The
+# raw per-cell JSON is an authoritative, complete list of every non-empty
+# cell in the source sheet, so cross-check every cell's value against the
+# LLM's prose and append anything missing - guaranteeing no value from the
+# sheet gets silently lost, without another LLM call.
+# ---------------------------------------------------------------------------
+
+
+def _label_and_value_refs(cell_structure) -> set:
+    """Walk a CELL_STRUCTURE dict (see structure_mapping.build_cell_structure)
+    and return the set of cell refs it uses as a label/header - a dict key
+    at any depth, or the context half of a "<context>:<value>" colon path.
+    Everything else (a plain value ref, or the value half of a colon path)
+    is a data value. Used only to keep the completeness check below from
+    flagging field NAMES (e.g. "FOULING RESISTANCE") as dropped just
+    because the LLM's prose paraphrased them - it still checks every actual
+    data value."""
+    label_refs = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                label_refs.add(k)
+                walk(v)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+        elif isinstance(node, str) and ":" in node:
+            label_refs.add(node.split(":", 1)[0])
+
+    walk(cell_structure)
+    return label_refs
+
+
+def _flatten_raw_cells(raw_data: dict, label_refs: set = frozenset()):
+    """Yield (path_tuple, value) for every non-empty raw cell that isn't a
+    known label/header cell. path is just the cell reference - raw cells
+    carry no structural label context, so unlike the structured-JSON
+    version there's no field name to show, only the coordinate and its
+    value."""
+    for cell in raw_data.get("cells", []):
+        if cell["cell"] in label_refs:
+            continue
+        value = cell.get("value")
+        if value is not None and str(value).strip() != "":
+            yield (cell["cell"],), value
+
+
+def _value_present(value, text: str) -> bool:
+    """True if value appears in text as a whole token - digit-boundary-safe
+    for numbers (so "1" doesn't match inside "31") and word-boundary-safe,
+    case-insensitive for text (so "FV" doesn't match inside "FVX")."""
+    value_str = str(value)
+    if re.fullmatch(r"-?\d+(\.\d+)?", value_str):
+        pattern = r"(?<![\d.])" + re.escape(value_str) + r"(?![\d.])"
+        return re.search(pattern, text) is not None
+    pattern = r"\b" + re.escape(value_str) + r"\b"
+    return re.search(pattern, text, re.IGNORECASE) is not None
+
+
+def _ensure_definition_completeness(requested_equipments: list, excel_raw_by_filename: dict) -> list:
+    """For each requested equipment item traceable to an Excel attachment,
+    append any source cell value the LLM's equipment_definition text left
+    out (checked by value, since prose legitimately rewords labels)."""
+    for item in requested_equipments:
+        mentioned_in = item.get("mentioned_in") or []
+        linked_filenames = [
+            fn for fn in excel_raw_by_filename
+            if any(fn in (m.get("document_name") or "") for m in mentioned_in)
+        ]
+        if not linked_filenames:
+            continue
+
+        definition = item.get("equipment_definition", "") or ""
+        missing = []
+        seen = set()
+        for fn in linked_filenames:
+            for raw_data, label_refs in excel_raw_by_filename[fn]:
+                for path, value in _flatten_raw_cells(raw_data, label_refs):
+                    if not _value_present(value, definition):
+                        line = f"{' > '.join(path)}: {value}"
+                        if line not in seen:
+                            seen.add(line)
+                            missing.append(line)
+
+        if missing:
+            supplement = (
+                "Additional values present in the source spreadsheet not otherwise "
+                "captured above: " + "; ".join(missing) + "."
+            )
+            item["equipment_definition"] = (definition.rstrip() + "\n\n" + supplement).strip()
+
+    return requested_equipments
+
+
 def _format_email_for_prompt(email) -> str:
     return (
         f"--- {email.direction.value.upper()} | {email.sent_at} ---\n"
@@ -310,7 +475,16 @@ def _format_email_for_prompt(email) -> str:
 
 def extract_specification_for_thread(thread) -> list:
     """Given a Thread ORM object (with .emails and .emails[*].attachments loaded),
-    concatenate every message + downloaded attachment and run the Claude extraction."""
+    extract from the single most recent downloaded attachment in the thread and
+    run the LLM extraction on it.
+
+    Deliberately NOT all attachments — this only ever reads the latest one
+    (e.g. the customer's clarification-reply spec sheet), by send date/time,
+    not the LLM's judgment. Answers already confirmed from an earlier
+    attachment/run aren't lost: template_consolidation.py's per-field
+    carry-forward (see has_real_value usage there) falls back to the
+    previously-saved value for any field this run doesn't find, as long as a
+    prior extraction already ran for this equipment item."""
     emails_sorted = sorted(thread.emails, key=lambda e: e.sent_at)
 
     # Email body is temporarily left out of the prompt — attachments only
@@ -318,27 +492,44 @@ def extract_specification_for_thread(thread) -> list:
     # email) to bring the email body back in.
     email_body = ""
 
-    attachments = []
-    for email in emails_sorted:
-        for attachment in email.attachments:
-            if not attachment.local_path:
-                continue
-            try:
-                text = extract_text_from_attachment(attachment.local_path)
-            except Exception as e:
-                text = f"[ERROR extracting content: {e}]"
-            attachments.append({
-                "filename": attachment.filename,
-                "sent_at": email.sent_at,
-                "text": text,
-            })
+    downloaded = [
+        (email, attachment)
+        for email in emails_sorted
+        for attachment in email.attachments
+        if attachment.local_path
+    ]
 
-    return call_claude_for_extraction(email_body, attachments)
+    attachments = []
+    excel_raw_by_filename = {}
+    if downloaded:
+        email, attachment = downloaded[-1]
+        is_excel = Path(attachment.local_path).suffix.lower() in (".xlsx", ".xlsm")
+        try:
+            if is_excel:
+                text, raw_sheets = _extract_structured_excel_text(thread.id, attachment)
+                excel_raw_by_filename[attachment.filename] = raw_sheets
+            else:
+                text = extract_text_from_attachment(attachment.local_path)
+        except Exception as e:
+            text = f"[ERROR extracting content: {e}]"
+        attachments.append({
+            "filename": attachment.filename,
+            "sent_at": email.sent_at,
+            "text": text,
+        })
+
+    requested_equipments = call_claude_for_extraction(email_body, attachments)
+    return _ensure_definition_completeness(requested_equipments, excel_raw_by_filename)
 
 
 def save_specification_result(thread_id, result: list) -> str:
     out_dir = Path(settings.specification_storage_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{thread_id}.json"
+    # Timestamped so re-running extraction on the same thread keeps every
+    # past run's output instead of overwriting it. Named <filename>-<timestamp>-
+    # <thread_id>.json (DDMMYYYY_HHMMSS - no colons, since ':' isn't a legal
+    # filename character on Windows) to match every other storage/ file.
+    timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
+    out_path = out_dir / f"specification-{timestamp}-{thread_id}.json"
     out_path.write_text(json.dumps(result, indent=2))
     return str(out_path)

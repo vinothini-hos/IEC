@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     # subfolder per thread, one file per equipment (see template_consolidation.py)
     data_extraction_storage_dir: str = "./storage/data_extraction"
 
+    # Local disk storage for raw per-sheet cell JSON consolidated from xlsx/xlsm
+    # attachments before extraction, one subfolder per thread then per attachment
+    # (see sheet_consolidation.py)
+    sheet_consolidation_storage_dir: str = "./storage/sheet_consolidation"
+
+    # Local disk storage for the deterministic, human-readable per-sheet JSON
+    # resolved from the raw cell data above (see structure_mapping.py) - this
+    # is what actually gets fed into Stage 1 extraction for xlsx/xlsm attachments
+    structured_sheets_storage_dir: str = "./storage/structured_sheets"
+
     # App
     cors_origins: list[str] = ["http://localhost:5173"]
 
@@ -37,8 +47,8 @@ class Settings(BaseSettings):
     # Blank query-sheet templates filled in and attached to clarification
     # emails (see spec_template.py) — column layout must match
     # SO2_TEMPLATE_FIELDS / CL2_TEMPLATE_FIELDS row order in template_consolidation.py
-    so2_template_path: str = r"C:\Users\iec_a\OneDrive\Documents\IEC Queries - SO2 template.xlsx"
-    cl2_template_path: str = r"C:\Users\iec_a\OneDrive\Documents\IEC Queries - CL2 template.xlsx"
+    so2_template_path: str = r"C:\Users\iec_a\Documents\IEC Queries - SO2 template.xlsx"
+    cl2_template_path: str = r"C:\Users\iec_a\Documents\IEC Queries - CL2 template.xlsx"
 
     # Similar Projects (RAG) — local on-disk Qdrant storage (one collection
     # per equipment type, see rag_vector_store.py) and where a thread's
@@ -68,7 +78,7 @@ class Settings(BaseSettings):
     # LLM backend — local Ollama server (see llm_client.py). Replaces the
     # earlier direct Anthropic/Claude calls in extraction.py,
     # template_consolidation.py, and rag_justification.py.
-    ollama_base_url: str = "http://213.173.99.7:34643"
+    ollama_base_url: str = "http://213.173.110.199:36724"
     ollama_model: str = "qwen-custom"
 
     # Every call_llm() call (from extraction.py, template_consolidation.py,
