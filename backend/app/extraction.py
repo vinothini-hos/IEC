@@ -60,25 +60,93 @@ def extract_text_from_docx(path: str) -> str:
     return "\n".join(chunks)
 
 
+def _dedupe_header(cells) -> list:
+    """[label, label, None] -> ["label", "label.1", "Unnamed: 2"] — same
+    collision handling pandas' read_excel/read_csv applies to a header row,
+    so two same-named columns don't clobber each other's dict key and a
+    blank header cell still gets a stable placeholder name."""
+    seen = {}
+    header = []
+    for i, cell in enumerate(cells):
+        name = str(cell).strip() if cell not in (None, "") else f"Unnamed: {i}"
+        if name in seen:
+            seen[name] += 1
+            name = f"{name}.{seen[name]}"
+        else:
+            seen[name] = 0
+        header.append(name)
+    return header
+
+
+def _read_excel_sheets(path: str) -> dict:
+    """dict {sheet_name: [row_dict, ...]} straight from openpyxl — no pandas.
+    Used as the fallback text-only view for XLSX/XLS/CSV attachments that
+    don't go through the dedicated raw-cell pipeline in sheet_consolidation.py
+    / structure_mapping.py (that pipeline only covers .xlsx/.xlsm, called
+    directly from extract_specification_for_thread — see
+    _extract_structured_excel_text). This function's own callers are
+    extract_text_from_attachment's .xls/.csv branch, and .xlsx/.xlsm if ever
+    reached some other way. Mirrors what pd.read_excel(path,
+    sheet_name=None).dropna(how="all") used to hand back: row 1 of each
+    sheet becomes the column names (pandas' header=0 default), every later
+    non-fully-empty row becomes one record keyed by those names. Pandas
+    itself is unavailable on this machine (its compiled _libs DLLs are
+    blocked by a Windows Code Integrity / WDAC policy — see Event Viewer
+    "Microsoft-Windows-CodeIntegrity/Operational", event 3077/3033 for
+    pandas\\_libs\\tslibs\\vectorized*.pyd), but openpyxl is a pure-Python
+    reader with no compiled extension, so it isn't affected."""
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path, data_only=True)
+    result = {}
+    for ws in wb.worksheets:
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            result[ws.title] = []
+            continue
+        header = _dedupe_header(rows[0])
+        records = []
+        for row in rows[1:]:
+            if all(cell is None for cell in row):
+                continue
+            records.append(dict(zip(header, row)))
+        result[ws.title] = records
+    return result
+
+
+def _read_csv_rows(path: str) -> list:
+    """[row_dict, ...] straight from the stdlib csv module — no pandas. Same
+    header=row-1 / drop-fully-empty-rows behavior as _read_excel_sheets;
+    values stay as the literal strings from the file (pandas would also
+    infer numeric dtypes for a CSV, but everything here is serialized back
+    to JSON text for the LLM prompt either way, so that distinction doesn't
+    change what the model reads)."""
+    import csv
+
+    with open(path, newline="", encoding="utf-8-sig", errors="ignore") as f:
+        rows = list(csv.reader(f))
+    if not rows:
+        return []
+
+    header = _dedupe_header(rows[0])
+    records = []
+    for row in rows[1:]:
+        if all(not cell.strip() for cell in row):
+            continue
+        padded = row + [None] * (len(header) - len(row))
+        records.append({key: (val if val != "" else None) for key, val in zip(header, padded)})
+    return records
+
+
 def extract_text_from_excel(path: str) -> str:
-    import json
-
-    import pandas as pd
-
     ext = Path(path).suffix.lower()
 
     if ext == ".csv":
-        all_sheets = {"CSV": pd.read_csv(path)}
+        all_sheets = {"CSV": _read_csv_rows(path)}
     else:
-        all_sheets = pd.read_excel(path, sheet_name=None)  # dict {sheet_name: df}
+        all_sheets = _read_excel_sheets(path)
 
-    result = {}
-    for sheet_name, df in all_sheets.items():
-        # Drop fully empty rows that sometimes cause messy output
-        df = df.dropna(how="all")
-        result[sheet_name] = df.to_dict(orient="records")
-
-    return json.dumps(result, indent=2, ensure_ascii=False, default=str)
+    return json.dumps(all_sheets, indent=2, ensure_ascii=False, default=str)
 
 
 def extract_text_from_attachment(path: str) -> str:
@@ -193,6 +261,14 @@ and understand what is being requested.
    Only fall back to an older document's value for a parameter if no later document mentions that
    parameter at all.
 
+9. THE KNOWLEDGE BASE IS FOR IDENTIFICATION ONLY — never for facts. Use it only to recognize WHICH
+   equipment type a document is talking about (via its name/synonyms). Never use it as a source of
+   configuration detail: e.g. because the knowledge base says CL2 vaporizers "typically use a hot
+   water bath, steam jacket, or electric heater," do not write that this specific requested item
+   uses a water bath, or has any other knowledge-base fact, unless the SOURCE DOCUMENT itself states
+   it for this item. Every fact in "equipment_definition" (see below) must trace back to the actual
+   document text/data, never to the knowledge base.
+
 === OUTPUT FORMAT ===
 
 Return ONLY a valid JSON array, no explanations, no markdown fences, in this exact structure. Write
@@ -236,13 +312,46 @@ FIELD DEFINITIONS:
   is required" or "purity spec to be confirmed by vendor" when the source never brings up a scrubber
   or purity at all). Simply omit any parameter that has zero textual evidence in the source; do not
   fill silence with an assumed "not required" or "to be confirmed".
+
+  VALUE FIDELITY — THE SOURCE DATA IS GROUND TRUTH, NEVER REINTERPRET IT:
+  "equipment_definition" is a readable restatement of the source data, NOT a technical
+  interpretation of it. Every value you write must be traceable to one specific row/field/sentence
+  in the source document, using that row's own stated value, unchanged. Specifically:
+    - Do not correct spelling, even if a label or value looks misspelled in the source.
+    - Do not normalize wording or "clean up" a value's phrasing.
+    - Do not convert or recompute units (e.g. if the source says "tonner pressure" for a pressure
+      field, write "tonner pressure" — do not turn it into an inferred numeric bar(g) value; if the
+      source gives a plain number with a unit, keep that exact figure and unit, do not convert it).
+    - Do not infer a missing value from a different field, from the field's own label, or from
+      general/domain knowledge.
+    - Do not calculate a value (e.g. do not derive one field's number from another's).
+    - Do not copy or borrow a value from one field/row into a different field/row, even if they seem
+      related. Each row's value belongs ONLY to that row's own label.
+    - Do not merge two or more separate rows into one sentence that changes or blends their meaning.
+      It is fine for one sentence to mention several fields for readability (e.g. "It has a design
+      capacity of 1000 kg/hr and is oriented vertically."), but each field's own value must appear
+      exactly as stated, and no field may take on a value that actually belongs to a neighboring
+      row. If two rows look related (e.g. a source count and a manifold arrangement note), state
+      them as separate facts unless the source text itself explicitly states the relationship
+      between them.
+    - Do not treat a row's LABEL as if it were the client's answer. A label is just the question
+      being asked; only its own value column/text is the answer.
+  MISSING VALUES MUST STAY MISSING: if a row/field exists in the source but its value is empty,
+  null, "--", "N/A", "TBC", "missing value", or similarly blank/placeholder, say plainly that it was
+  not provided (e.g. "Heating fluid was not provided.") — never substitute a value from a related
+  field, the row's label, or domain knowledge just because the real answer is empty.
+
   FORMAT: always write this as flowing prose in plain sentences — even if the source data appears
-  as a table, spec sheet, or row/column layout in the attachment. Convert tabular fields into
-  natural sentences (e.g. a table row like "Capacity: 1000 kg/hr | MOC: Monel | Type: Water bath"
-  becomes "This unit has a capacity of 1000 kg/hr, is constructed of Monel, and uses a water bath
-  heating type."). Never output raw key-value pairs, bullet points, or pipe/table-style formatting
-  in this field. It is fine (expected, for a detailed spec sheet) for this paragraph to run several
-  sentences long in order to cover every parameter.
+  as a table, spec sheet, or row/column layout in the attachment (including structured
+  label/UOM/value rows from a spreadsheet, or raw cell-coordinate JSON). Convert tabular fields into
+  natural sentences one row at a time (e.g. a table row like "Capacity: 1000 kg/hr | MOC: Monel |
+  Type: Water bath" becomes "This unit has a capacity of 1000 kg/hr, is constructed of Monel, and
+  uses a water bath heating type." — three separate rows, each value kept exactly as stated, none
+  blended into another). Never output raw key-value pairs, bullet points, or pipe/table-style
+  formatting in this field. It is fine (expected, for a detailed spec sheet) for this paragraph to
+  run several sentences long in order to cover every parameter — completeness and prose readability
+  are still required, they just must never come at the cost of changing, combining, or inventing a
+  value.
   VERBATIM ABBREVIATIONS/CODES: writing this as flowing prose does NOT mean explaining or expanding
   technical abbreviations, codes, or shorthand (e.g. "FLP", "Non-FLP", "MOC", a model/tag number).
   Reproduce them exactly as they appear in the source, as-is, inside your sentence, with no added
