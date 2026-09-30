@@ -1,6 +1,8 @@
-function formatValue(value) {
+function formatValue(value, status) {
+  if (status === "missing") return "-";
+  if (status === "needs_clarification") return "Not specified";
   if (typeof value === "boolean") return value ? "Yes" : "No";
-  return value || "—";
+  return value || "-";
 }
 
 export default function ClarificationCard({
@@ -27,11 +29,14 @@ export default function ClarificationCard({
           <div className="clarification-field" key={key}>
             <div className="clarification-field-label">{f.label}</div>
             <div className="clarification-field-value">
-              Current value: {formatValue(f.value)}
+              Current value: {formatValue(f.value, f.status)}
             </div>
             <div className="clarification-field-status">
               Status: {f.status === "missing" ? "Missing" : "Needs clarification"}
             </div>
+            {f.reason && (
+              <div className="clarification-field-reason">Why: {f.reason}</div>
+            )}
           </div>
         ))}
       </div>

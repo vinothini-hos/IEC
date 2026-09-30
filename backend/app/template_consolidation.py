@@ -9,6 +9,7 @@ clarification email draft when mandatory info is missing.
 """
 
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -175,25 +176,45 @@ Source References: {mentioned_in_text}
    reference context) above. Do not use outside/general knowledge about SO2 or CL2 vaporizers, and
    do not invent or assume values that are not stated in this entry.
 2. Classify each field's "status" as exactly one of:
-   - "confirmed": a clear, usable value is stated for this field. A DEFINITE NEGATIVE ANSWER COUNTS
-     AS CONFIRMED, not missing — e.g. "site layout is not provided", "no scrubber required", "zero
-     tonners connected" are all real, usable answers (value = the stated negative, e.g. "Not
-     provided" / "No" / "0"). Only use "missing" when the topic is never addressed at all — never
-     for a topic the source explicitly answers with "no"/"not provided"/"none".
-   - "needs_review": a value is stated but it is ambiguous, an unexplained code/abbreviation, or
-     otherwise unclear enough that an engineer should double-check it before using it (e.g. a
-     cryptic abbreviation instead of a real figure or description).
-   - "needs_clarification": the field is critical to sizing/building the equipment (e.g. capacity,
-     pressures, temperatures, source gas, tonner count, site/installation conditions) and no usable
-     value was given — this should be asked of the customer.
-   - "missing": the field was not mentioned and is not the kind of detail that needs to go back to
-     the customer (e.g. an internal scope/commercial choice) — leave it for the internal team, don't
-     flag it for customer clarification.
-3. "value": the extracted text for "confirmed"/"needs_review" fields, or the literal stated
-   (but unclear) text for "needs_review". For "needs_clarification"/"missing", set value to JSON
-   null unless the source literally contains an unclear stand-in value (e.g. an abbreviation like
-   "VTS" that doesn't answer the question) — in that case keep that text as the value AND mark the
-   status "needs_clarification", since the customer needs to clarify what it means.
+   - "confirmed": the paragraph gives a real, DECIDED answer for this exact topic — a concrete
+     figure, name, choice, or a genuine negative DECISION (e.g. "no scrubber required", "manifold
+     not required", "zero tonners connected" — someone actually decided/answered "no"). value = that
+     stated text.
+   - "needs_clarification": the topic IS raised in the paragraph — by its field name or a clear
+     reference to it — but no real, decided answer was captured. THIS INCLUDES THE COMMON CASE
+     where the paragraph explicitly names the field and then says the value itself was blank, e.g.
+     "Heating media = not specified", "Heating Fluid was not provided", "Winter temperature: TBC",
+     "Site layout: N/A". That exact phrasing — "<field name> ... not specified/not provided/TBC/N/A"
+     — is proof the field WAS asked about and the answer column was simply empty, which is a
+     needs_clarification case, NOT missing. Also covers an unexplained code/abbreviation that
+     doesn't answer the question (e.g. "VTS").
+   - "missing": the paragraph never raises this topic in ANY form — not by name, not as "not
+     specified"/"not provided" either. There is no sentence or fragment about it anywhere, not even
+     a blank placeholder for it.
+
+   HOW TO TELL "needs_clarification" APART FROM "missing" — DO NOT CONFUSE THEM:
+   - If the paragraph contains the field's own name/topic followed by "not specified" / "not
+     provided" / "TBC" / "N/A" / "--" / blank, that is needs_clarification (the field was present,
+     its value wasn't). Example: paragraph says "Heating media = not specified" ->
+     "heating_media" = needs_clarification, value null, reason "Heating media was not specified in
+     the enquiry."
+   - Only use "missing" when the field's topic never appears in the paragraph at all — no mention,
+     no "not specified" note, nothing. Example: if the paragraph never discusses a site layout or
+     flow scheme in any form (not even a "not provided" note about it), "site_layout_provided" =
+     missing, value null.
+   - Do NOT invent filler text like "Not provided"/"Not specified"/"None"/"No" into "value" for a
+     topic that has no textual trace at all in the paragraph — that is fabrication. Only use text
+     the paragraph itself actually wrote.
+3. "value": the extracted text for "confirmed" fields. For "needs_clarification", set value to
+   JSON null unless the source literally contains an unclear stand-in value (e.g. an abbreviation
+   like "VTS" that doesn't answer the question) — in that case keep that text as the value. For
+   "missing", always set value to JSON null.
+3b. "reason": REQUIRED whenever status is "needs_clarification" — a short, specific sentence
+    explaining why the customer needs to be asked, e.g. "Design capacity was not stated anywhere in
+    the enquiry, and it's required to size the vaporizer." or "The manifold arrangement is required
+    but the working/standby split was never given." Do not write a generic placeholder like "not
+    provided" — say what is missing and, where relevant, why it matters. Set "reason" to JSON null
+    for every other status.
 4. "source": a short label for where this came from (e.g. "specification.xlsx", "Email Body"), or
    null if the field has no value.
 5. Match field intent even if the entry's wording differs from the field label (e.g. "Design
@@ -216,7 +237,8 @@ Source References: {mentioned_in_text}
 
    {{
      "fields": {{
-       "<field_key>": {{"value": "<text>" | null, "status": "<status>", "source": "<text>" | null}},
+       "<field_key>": {{"value": "<text>" | null, "status": "<status>", "source": "<text>" | null,
+                         "reason": "<text>" | null}},
        ...
      }}
    }}
@@ -229,6 +251,25 @@ Source References: {mentioned_in_text}
 # track at once against the (still-full) equipment_definition text, which
 # cuts down on fields getting skipped near the end of a long paragraph.
 FIELD_BATCH_SIZE = 6
+
+# Matches a negation ("not"/"never"/"no"/"nothing"/"nowhere") within a few
+# words of a strong "topic was never brought up at all" verb, e.g. "no site
+# layout ... was mentioned" or "chlorine temperature was never raised". Verbs
+# like "stated"/"specified"/"given" are deliberately excluded — a reason like
+# "Design capacity was not stated anywhere" (see rule 3b's own example) is a
+# genuine needs_clarification case, not proof the topic was never raised at
+# all, so it must NOT be caught by this safety net.
+_TOPIC_ABSENT_RE = re.compile(
+    r"\b(?:not|never|no|nothing|nowhere)\b(?:\s+\w+){0,8}\s+"
+    r"(?:mentioned|raised|discussed|addressed|referenced|brought\s+up|touched\s+on)\b",
+    re.IGNORECASE,
+)
+
+
+def _reason_admits_topic_absent(reason) -> bool:
+    if not isinstance(reason, str):
+        return False
+    return bool(_TOPIC_ABSENT_RE.search(reason))
 
 
 def _fill_template_fields_batch(equipment: dict, field_defs_batch: list) -> dict:
@@ -279,9 +320,19 @@ def _fill_template_fields_batch(equipment: dict, field_defs_batch: list) -> dict
         if isinstance(entry, dict):
             field_values[key] = entry
         elif entry not in (None, ""):
-            field_values[key] = {"value": str(entry), "status": "confirmed", "source": None}
+            field_values[key] = {"value": str(entry), "status": "confirmed", "source": None, "reason": None}
         else:
-            field_values[key] = {"value": None, "status": "missing", "source": None}
+            field_values[key] = {"value": None, "status": "missing", "source": None, "reason": None}
+
+    # Safety net for the local model's known unreliability at following the
+    # confirmed/needs_clarification/missing distinction: if its own "reason"
+    # text admits the topic was never brought up at all, that IS the
+    # definition of "missing" regardless of what status/value it picked -
+    # override rather than let a self-contradictory (and often fabricated,
+    # e.g. value "Not provided") entry through.
+    for key, entry in field_values.items():
+        if entry.get("status") != "missing" and _reason_admits_topic_absent(entry.get("reason")):
+            field_values[key] = {"value": None, "status": "missing", "source": None, "reason": None}
 
     return field_values
 
@@ -301,6 +352,7 @@ def fill_template_fields(equipment: dict, field_defs: list) -> dict:
                 "value": equipment_name,
                 "status": "confirmed" if equipment_name else "missing",
                 "source": None,
+                "reason": None,
             }
         else:
             llm_field_defs.append((key, label))
@@ -329,16 +381,19 @@ def _get_reply_recipient(thread) -> str:
     return last.recipient or last.sender or ""
 
 
-def _build_clarification_draft(thread, equipment_name: str, needs_clarification_labels: list) -> dict:
-    if not needs_clarification_labels:
+def _build_clarification_draft(thread, equipment_name: str, needs_clarification_items: list) -> dict:
+    if not needs_clarification_items:
         return None
 
     recipient = _get_reply_recipient(thread)
     subject = f"Clarification needed: {equipment_name} enquiry"
 
-    count = len(needs_clarification_labels)
+    count = len(needs_clarification_items)
     intro = "one clarification" if count == 1 else f"{count} clarifications"
-    bullet_list = "\n".join(f"- {label}" for label in needs_clarification_labels)
+    bullet_list = "\n".join(
+        f"- {item['label']}: {item['reason']}" if item.get("reason") else f"- {item['label']}"
+        for item in needs_clarification_items
+    )
 
     body = (
         f"Dear Customer,\n\n"
@@ -379,17 +434,14 @@ def _classification_label(equipment_name: str, fields: dict) -> str:
 
 
 def has_real_value(entry: dict) -> bool:
-    """True if this field entry has an actual stated answer - "confirmed"/
-    "needs_review" with a non-empty value - as opposed to "missing"/
+    """True if this field entry has an actual stated answer - status
+    "confirmed" with a non-empty value - as opposed to "missing"/
     "needs_clarification", which always carry value=None. Public because
     spec_template.py reuses it to decide which Client Input cells to
     highlight in the generated Excel."""
     if not isinstance(entry, dict):
         return False
-    return entry.get("status") in ("confirmed", "needs_review") and entry.get("value") not in (
-        None,
-        "",
-    )
+    return entry.get("status") == "confirmed" and entry.get("value") not in (None, "")
 
 
 def _find_latest_file(out_dir: Path, prefix: str):
@@ -442,22 +494,26 @@ def run_data_extraction_for_thread(thread, requested_equipments: list) -> list:
 
         fields = {}
         filled = 0
-        needs_clarification_labels = []
+        needs_clarification_items = []
         for key, label in field_defs:
-            entry = field_values.get(key) or {"value": None, "status": "missing", "source": None}
+            entry = field_values.get(key) or {
+                "value": None, "status": "missing", "source": None, "reason": None,
+            }
             if not has_real_value(entry) and has_real_value(previous_fields.get(key)):
                 entry = previous_fields[key]
             status = entry.get("status", "missing")
+            reason = entry.get("reason") if status == "needs_clarification" else None
             fields[key] = {
                 "label": label,
                 "value": entry.get("value"),
                 "status": status,
                 "source": entry.get("source"),
+                "reason": reason,
             }
             if status == "confirmed":
                 filled += 1
             if status in ("needs_clarification", "missing"):
-                needs_clarification_labels.append(label)
+                needs_clarification_items.append({"label": label, "reason": reason})
 
         total = len(field_defs)
         item = {
@@ -472,7 +528,7 @@ def run_data_extraction_for_thread(thread, requested_equipments: list) -> list:
                 "percent": round(filled / total * 100) if total else 0,
             },
             "clarification_draft": _build_clarification_draft(
-                thread, equipment_name, needs_clarification_labels
+                thread, equipment_name, needs_clarification_items
             ),
         }
         equipment_items.append(item)

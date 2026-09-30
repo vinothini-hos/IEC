@@ -21,6 +21,7 @@ export default function SpecificationCard({ fields, completion }) {
             value={field.value}
             status={field.status}
             source={field.source}
+            reason={field.reason}
           />
         ))}
       </div>

@@ -37,6 +37,7 @@ def fill_template_workbook(equipment_name: str, type_label: str, fields: dict, r
     """Returns (filename, bytes) for the filled workbook, or (None, None) if
     there's no template for this equipment type."""
     import openpyxl
+    from openpyxl.comments import Comment
     from openpyxl.styles import PatternFill
 
     path_fn = TEMPLATE_PATHS.get(type_label)
@@ -58,10 +59,19 @@ def fill_template_workbook(equipment_name: str, type_label: str, fields: dict, r
 
     for offset, (key, _label) in enumerate(field_defs):
         entry = fields.get(key) or {}
-        value = entry.get("value")
-        cell = ws.cell(row=FIRST_ROW + offset, column=VALUE_COLUMN, value=value if value else "-")
+        status = entry.get("status")
+        if status == "needs_clarification":
+            display_value = "Not specified"
+        elif status == "missing":
+            display_value = "-"
+        else:
+            display_value = entry.get("value") or "-"
+        cell = ws.cell(row=FIRST_ROW + offset, column=VALUE_COLUMN, value=display_value)
         if not has_real_value(entry):
             cell.fill = missing_fill
+            reason = entry.get("reason")
+            if reason:
+                cell.comment = Comment(reason, "IEC Spec Extraction")
 
     buf = io.BytesIO()
     wb.save(buf)

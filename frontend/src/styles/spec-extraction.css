@@ -271,7 +271,6 @@
 .spec-field-confirmed .spec-field-icon {
   color: #1a7f37;
 }
-.spec-field-needs_review .spec-field-icon,
 .spec-field-needs_clarification .spec-field-icon {
   color: #b45309;
 }
@@ -283,12 +282,9 @@
    row — both the specification label and the Client Input value, not just
    the icon — so a gap in the extracted spec is obvious at a glance. A
    confirmed answer (e.g. "Not required") stays in the normal style above. */
-.spec-field-needs_review,
 .spec-field-needs_clarification {
   background: #fffbeb;
 }
-.spec-field-needs_review .spec-field-label,
-.spec-field-needs_review .spec-field-value,
 .spec-field-needs_clarification .spec-field-label,
 .spec-field-needs_clarification .spec-field-value {
   color: #b45309;
@@ -350,6 +346,13 @@
   color: #b45309;
   margin-top: 2px;
   font-weight: 600;
+}
+
+.clarification-field-reason {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+  font-style: italic;
 }
 
 .clarification-email {
