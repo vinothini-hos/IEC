@@ -1,0 +1,175 @@
+/* ---------- Design Calculation page ---------- */
+.calc-tab-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--color-badge-bg);
+  vertical-align: middle;
+}
+
+.calc-sheet-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.calc-sheet-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.calc-download {
+  text-decoration: none;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.calc-table-wrap {
+  margin-top: 18px;
+  overflow-x: auto;
+}
+
+.calc-table-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.calc-table-id {
+  font-weight: 400;
+  color: var(--color-text-faint);
+  margin-left: 4px;
+}
+
+.calc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.calc-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  background: var(--color-bg-subtle);
+  border-bottom: 1px solid var(--color-border);
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.calc-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.calc-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.calc-row-id,
+.calc-unit {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.calc-formula {
+  cursor: help;
+}
+
+.calc-missing {
+  background: #fff7e0;
+  color: #92400e;
+}
+
+.calc-row-error td {
+  border-bottom: none;
+}
+
+.calc-error-line td {
+  color: #b91c1c;
+  font-size: 12px;
+  padding-top: 0;
+}
+
+/* ---------- Editable values ---------- */
+.calc-value-cell {
+  position: relative;
+}
+
+.calc-icon-btn {
+  border: none;
+  background: none;
+  padding: 0 3px;
+  margin-left: 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--color-text-faint);
+  cursor: pointer;
+}
+
+.calc-icon-btn:hover:not(:disabled) {
+  color: var(--color-accent);
+}
+
+.calc-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.calc-edit-btn {
+  opacity: 0.35;
+}
+
+.calc-value-cell:hover .calc-edit-btn,
+.calc-edit-btn:focus-visible {
+  opacity: 1;
+}
+
+.calc-edited {
+  background: #eaf2ff;
+  font-weight: 600;
+}
+
+.calc-edit-form {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.calc-edit-input {
+  width: 110px;
+  padding: 3px 6px;
+  font: inherit;
+  text-align: right;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+}
+
+.calc-edit-error {
+  color: #b91c1c;
+  font-size: 11.5px;
+  white-space: normal;
+  text-align: left;
+}
+
+.calc-pending-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  font-size: 13px;
+  background: #eaf2ff;
+  border: 1px solid #bfd4fb;
+  border-radius: var(--radius-md);
+}

@@ -7,6 +7,7 @@ export default function PageHeader({
   onExtract,
   extracting,
   onFindSimilarProjects,
+  onDesignCalc,
 }) {
   return (
     <div className="spec-page-header">
@@ -43,6 +44,9 @@ export default function PageHeader({
           onClick={onSendClarification}
         >
           {sendingClarification ? "Sending…" : "Send clarification"}
+        </button>
+        <button type="button" className="btn-secondary" onClick={onDesignCalc}>
+          Design calculation
         </button>
         <button type="button" className="btn-primary" onClick={onFindSimilarProjects}>
           Find similar projects →

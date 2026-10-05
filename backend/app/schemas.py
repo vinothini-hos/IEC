@@ -68,3 +68,16 @@ class ClarificationIn(BaseModel):
 
 class SimilarProjectsIn(BaseModel):
     equipment_index: int = 0
+
+
+class DesignCalcIn(BaseModel):
+    equipment_index: int = 0
+
+
+class DesignCalcCellIn(BaseModel):
+    equipment_index: int = 0
+    sheet_key: str
+    table_id: str
+    row_id: str
+    key: str  # value1 / value2 / value / an extra column
+    value: str | float | None = None  # None or "" reverts to the calc JSON's formula

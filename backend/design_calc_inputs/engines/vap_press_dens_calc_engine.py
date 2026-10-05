@@ -1,0 +1,978 @@
+"""
+vap_press_dens_calc_engine.py - chlorine vapour pressure & density. Self-contained: evaluates
+json/sample vap press-dens json.json
+with the cl2 enquiry sheet.
+
+Run:  python vap_press_dens_calc_engine.py
+
+
+Formula language supported (value strings starting with "="):
+    =f_multiply(a, b, ...)   =f_div(a, b)   =f_add(a, b, ...)   =f_sub(a, b)
+    =f_pow(a, b)  =f_min(...)  =f_max(...)  =f_round(a, n)
+    =f_vlookup(value, $sheet1.VLOOKUP_001, col, 0)   Excel VLOOKUP on a lookup table JSON
+    =f_vlookup(value, VLOOKUP1.B17.nb:VLOOKUP1.B20.od, col)   same, Excel-style range
+    =VLOOKUP(...)            same as f_vlookup
+                     (sheet_id.Vlookup_table_id; col = number or column name; 0 exact, 1 approx)
+    =f_def1(a) 273+a                                        degC -> K
+    =f_def2(a) EXP(71.33+(-3855/a)-8.5171*LN(a)+0.01237*a^1)  Cl2 vapour pressure, Pa (a = T in K)
+    =f_def3(a) a/100000   Pa -> bar(a)       =f_def4(a) a-1.01325   bar(a) -> bar(g)
+    =f_def5(a) 2.23/0.27645^(1+(1-(a/417.15))^0.2926)       Cl2 liquid density, kmol/m3 (a = T in K)
+    =f_def6(a) 70.91*a                                      kmol/m3 -> kg/m3
+    plain arithmetic: + - * / ( )  e.g. =@T.D7*2.205
+    references:
+        @TABLE_ID.D7        -> cell D7 in table TABLE_ID (column letter -> value key via COLUMN_MAP)
+        @TABLE_ID.value1.B7 -> explicit key + row id (alternative form)
+        @TABLE_ID.B7.value1 -> same, row id first
+        sheet_name.field    -> external input, e.g. enquiry_sheet.abc (supplied via `inputs`)
+    literals: numbers, "quoted strings"
+Anything not starting with "=" is a literal ("-" or "" = empty, "???" = missing input).
+Row key "merged": "C12:D12" merges the field written just before it (right after "id": the
+description). A row can merge several fields, one "merged" after each:
+    "description": "allow tensile stress", "merged": "A12:B12", "value1": 52, "merged": "C12:D12"
+The other fields follow one cell each in the order unit1, value1, value2, unit2, extra columns,
+notes/errors, skipping merged cells (merged A5:C5 -> unit1 D5, value1 E5). Rows without "merged"
+keep the fixed layout below.
+Any other key in a row (e.g. "ultimate tensile strength": 60000) is an extra column: written to
+column H, I, ... (in order of first appearance), calculated like value1, referred to by cell (@T.H11).
+"""
+import json, csv, re, math
+from pathlib import Path
+
+# Excel column letter -> JSON value key. Row id "B7" -> row number 7.
+COLUMN_MAP = {"D": "value1", "E": "value2"}
+VALUE_KEYS = ["value1", "value2", "value"]
+KEY_COL = {"value1": "D", "value2": "E", "value": "D"}   # "value": single-value tables
+HEADER_COL = {"description": "B", "unit1": "C", "unit": "C", "value1": "D", "value": "D",
+              "value2": "E", "unit2": "F", "notes": "G"}      # table column key -> Excel column
+
+
+# ---------------- VLOOKUP tables ----------------
+LOOKUPS = {}      # "$sheet1.VLOOKUP_001" -> lookup table JSON (sheet_id + Vlookup_table_id)
+LOOKUP_XL = {}    # same key -> Excel range of that table, filled while writing the .xlsx
+
+def load_lookups(folder):
+    """Load every lookup table JSON (one with "Vlookup_table_id") found in `folder` into LOOKUPS."""
+    for path in sorted(Path(folder).glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            continue
+        for t in data if isinstance(data, list) else [data]:
+            if isinstance(t, dict) and "Vlookup_table_id" in t:
+                key = f"{t.get('sheet_id')}.{t['Vlookup_table_id']}"
+                if key in LOOKUPS:
+                    print(f"warning: lookup {key} defined twice, using {path.name}")
+                LOOKUPS[key] = t
+    return LOOKUPS
+
+def lookup_table(name):
+    t = LOOKUPS.get(name)
+    if t is None:
+        raise CalcError(f"Lookup table {name} not loaded (loaded: {list(LOOKUPS)})")
+    return t
+
+def lookup_col(t, col):
+    """Column number (1 = first column) from a number or a column key / display name."""
+    cols = t.get("columns", [])
+    if isinstance(col, (int, float)):
+        i = int(col)
+    else:
+        i = next((n for n, c in enumerate(cols, 1) if col in (c["key"], c.get("display_name"))), 0)
+    if not 1 <= i <= len(cols):
+        raise CalcError(f"Column {col!r} not in lookup {t['Vlookup_table_id']} (1..{len(cols)})")
+    return i
+
+def lookup_cell(t, row, i):
+    """Value of column i in a lookup row - stored under the column's key or its display_name."""
+    c = t["columns"][i - 1]
+    return row.get(c["key"], row.get(c.get("display_name")))
+
+def lookup_range(spec):
+    """Resolve a lookup reference to (key, table, rows, first column no., last column no.).
+    spec: "$sheet1.VLOOKUP_001"                  whole table, by sheet id + lookup table id
+          "VLOOKUP1.B17.nb:VLOOKUP1.B20.od"      Excel-style range: table name or id, rows, columns"""
+    if ":" not in spec:
+        t = lookup_table(spec)
+        return spec, t, t["rows"], 1, len(t.get("columns", []))
+    (n1, r1, c1), (n2, r2, c2) = (p.split(".") for p in spec.split(":"))
+    if n1 != n2:
+        raise CalcError(f"Range {spec} spans two lookup tables")
+    keys = [k for k, t in LOOKUPS.items() if n1 in (t.get("Vlookup_table_name"), t["Vlookup_table_id"])]
+    if not keys:
+        raise CalcError(f"Lookup table {n1} not loaded (loaded: {list(LOOKUPS)})")
+    if len(keys) > 1:
+        raise CalcError(f"Lookup name {n1} is in several sheets {keys} - use $sheet_id.table_id")
+    t = LOOKUPS[keys[0]]
+    lo, hi = sorted((int(r1[1:]), int(r2[1:])))
+    rows = [r for r in t["rows"] if lo <= int(r["id"][1:]) <= hi]
+    ci, cj = sorted((lookup_col(t, c1), lookup_col(t, c2)))
+    return keys[0], t, rows, ci, cj
+
+def range_col(t, ci, cj, col, spec):
+    """Absolute column no. of `col` (number counted from the range's first column, or a name)."""
+    i = ci + int(col) - 1 if isinstance(col, (int, float)) else lookup_col(t, col)
+    if not ci <= i <= cj:
+        raise CalcError(f"Column {col!r} is outside {spec}")
+    return i
+
+def f_vlookup(value, table, col, approx=0):
+    """Excel VLOOKUP(value, table, col, approx) on a lookup table JSON.
+    table: $sheet1.VLOOKUP_001 (sheet id + lookup table id) or VLOOKUP1.B17.nb:VLOOKUP1.B20.od (range)
+    col: column number counted from the first column of the table/range, or a column name
+    approx: 0 = exact match (default), 1 = largest first-column value <= value (Excel TRUE)"""
+    _, t, rows, ci, cj = lookup_range(table)
+    i = range_col(t, ci, cj, col, table)
+    match = None
+    for r in rows:
+        k = lookup_cell(t, r, ci)
+        if not approx and k == value:
+            match = r
+            break
+        if approx and isinstance(k, (int, float)) and k <= value and (
+                match is None or k >= lookup_cell(t, match, ci)):
+            match = r
+    if match is None:
+        raise CalcError(f"{value!r} not found in first column of {table}")
+    v = lookup_cell(t, match, i)
+    if v in (None, "-", ""):
+        raise CalcError(f"{table}: no value in column {i} for {value!r}")
+    return v
+
+def xl_vlookup(value, table, col, approx="0"):
+    """Excel form of f_vlookup: VLOOKUP(value, 'VLOOKUP1'!$B$17:$C$20, col, FALSE)."""
+    from openpyxl.utils import get_column_letter as L
+    key, t, rows, ci, cj = lookup_range(table)
+    if key not in LOOKUP_XL:
+        raise CalcError(f"Lookup table {table} not in the workbook")
+    sheet, shift = LOOKUP_XL[key]
+    nums = [int(r["id"][1:]) + shift for r in rows]
+    rng = f"'{sheet}'!${L(ci + 1)}${min(nums)}:${L(cj + 1)}${max(nums)}"
+    if col.startswith('"'):
+        col = range_col(t, ci, cj, col[1:-1], table) - ci + 1
+    elif re.fullmatch(r"\d+\.?\d*", col):
+        col = range_col(t, ci, cj, float(col), table) - ci + 1
+    exact = approx in ("0", "0.0", "FALSE")
+    return f"VLOOKUP({value},{rng},{col},{'FALSE' if exact else 'TRUE'})"
+
+FUNCS = {
+    "f_multiply": lambda *a: math.prod(a),
+    "f_div": lambda a, b: a / b,
+    "f_add": lambda *a: sum(a),
+    "f_sub": lambda a, b: a - b,
+    "f_pow": lambda a, b: a ** b,
+    "f_min": min,
+    "f_max": max,
+    "f_round": lambda a, n=0: round(a, int(n)),
+    "f_vlookup": f_vlookup,          # VLOOKUP on a lookup table JSON
+    "VLOOKUP": f_vlookup,            # same, Excel spelling: =VLOOKUP(value, VLOOKUP1.B36.nb:VLOOKUP1.B63.od, 2)
+    # fixed-factor definitions
+    # vapour pressure / density formulas: add each here AND in EXCEL_FUNCS below
+    "f_def1": lambda a: 273 + a,                      # degC -> K
+    # DIPPR eq. 101 for Cl2: exp(A + B/T + C*ln(T) + D*T^E), C = -8.5171
+    "f_def2": lambda a: math.exp(71.33 + (-3855 / a) - 8.5171 * math.log(a) + 0.01237 * a ** 1),  # Pa
+    "f_def3": lambda a: a / 100000,                   # Pa -> bar(a)
+    "f_def4": lambda a: a - 1.01325,                  # bar(a) -> bar(g)
+    # DIPPR eq. 105 for Cl2: A / B^(1 + (1 - T/Tc)^D)
+    "f_def5": lambda a: 2.23 / 0.27645 ** (1 + (1 - (a / 417.15)) ** 0.2926),  # kmol/m3
+    "f_def6": lambda a: 70.91 * a,                    # kmol/m3 -> kg/m3 (Cl2 molar mass)
+}
+
+# Excel versions of FUNCS, used when writing formulas to the .xlsx (arguments arrive already bracketed)
+EXCEL_FUNCS = {
+    "f_multiply": lambda *a: "*".join(a),
+    "f_div": lambda a, b: f"{a}/{b}",
+    "f_add": lambda *a: "+".join(a),
+    "f_sub": lambda a, b: f"{a}-{b}",
+    "f_pow": lambda a, b: f"POWER({a},{b})",
+    "f_min": lambda *a: f"MIN({','.join(a)})",
+    "f_max": lambda *a: f"MAX({','.join(a)})",
+    "f_round": lambda a, n="0": f"ROUND({a},{n})",
+    "f_vlookup": xl_vlookup,
+    "VLOOKUP": xl_vlookup,
+    "f_def1": lambda a: f"273+{a}",
+    "f_def2": lambda a: f"EXP(71.33+(-3855/{a})-8.5171*LN({a})+0.01237*{a}^1)",
+    "f_def3": lambda a: f"{a}/100000",
+    "f_def4": lambda a: f"{a}-1.01325",
+    "f_def5": lambda a: f"2.23/0.27645^(1+(1-({a}/417.15))^0.2926)",
+    "f_def6": lambda a: f"70.91*{a}",
+}
+
+class CalcError(Exception):
+    pass
+
+# ---------------- tokenizer + recursive-descent parser ----------------
+TOKEN_RE = re.compile(r"""
+    (?P<num>\d+\.?\d*(?:[eE][-+]?\d+)?|\.\d+)
+  | (?P<str>"[^"]*")
+  | (?P<rng>\w+\.\w+\.\w+:\w+\.\w+\.\w+)    # VLOOKUP1.B17.nb:VLOOKUP1.B20.od (lookup range)
+  | (?P<lkp>\$\w+\.\w+)                         # $sheet1.VLOOKUP_001 (lookup table)
+  | (?P<ref>@?[A-Za-z_][\w]*(?:\.[\w]+)+(?:[ \t]+[A-Za-z_]\w*)*)   # @T.D7, @T.B11.value1, enquiry_sheet.abc,
+                                                # @T.B11.ultimate tensile strength (field names with spaces)
+  | (?P<name>[A-Za-z_]\w*)                      # function names / bare cell refs
+  | (?P<op>[-+*/(),])
+  | (?P<ws>\s+)
+""", re.X)
+
+def tokenize(s):
+    pos, out = 0, []
+    while pos < len(s):
+        m = TOKEN_RE.match(s, pos)
+        if not m:
+            raise CalcError(f"Unexpected character {s[pos]!r} in formula {s!r}")
+        pos = m.end()
+        if m.lastgroup == "ref":                  # "B11.ultimate  tensile strength" -> single spaces
+            out.append(("ref", " ".join(m.group().split())))
+        elif m.lastgroup != "ws":
+            out.append((m.lastgroup, m.group()))
+    return out
+
+class Parser:
+    def __init__(self, tokens, resolve):
+        self.t, self.i, self.resolve = tokens, 0, resolve
+    def peek(self):
+        return self.t[self.i] if self.i < len(self.t) else (None, None)
+    def take(self, val=None):
+        tok = self.peek()
+        if val is not None and tok[1] != val:
+            raise CalcError(f"Expected {val!r}, got {tok[1]!r}")
+        self.i += 1
+        return tok
+    def parse(self):
+        v = self.expr()
+        if self.i != len(self.t):
+            raise CalcError(f"Trailing tokens: {self.t[self.i:]}")
+        return v
+    def expr(self):
+        v = self.term()
+        while self.peek()[1] in ("+", "-"):
+            op = self.take()[1]; r = self.term()
+            v = v + r if op == "+" else v - r
+        return v
+    def term(self):
+        v = self.factor()
+        while self.peek()[1] in ("*", "/"):
+            op = self.take()[1]; r = self.factor()
+            v = v * r if op == "*" else v / r
+        return v
+    def factor(self):
+        kind, val = self.peek()
+        if val == "-":
+            self.take(); return -self.factor()
+        if val == "+":
+            self.take(); return self.factor()
+        if val == "(":
+            self.take(); v = self.expr(); self.take(")"); return v
+        if kind == "num":
+            self.take(); return float(val)
+        if kind == "str":
+            self.take(); return val[1:-1]
+        if kind in ("lkp", "rng"):
+            self.take(); return val
+        if kind == "ref":
+            self.take(); return self.resolve(val)
+        if kind == "name":
+            self.take()
+            if self.peek()[1] == "(":            # function call
+                if val not in FUNCS:
+                    raise CalcError(f"Unknown function {val}")
+                self.take("(")
+                args = []
+                if self.peek()[1] != ")":
+                    args.append(self.expr())
+                    while self.peek()[1] == ",":
+                        self.take(); args.append(self.expr())
+                self.take(")")
+                return FUNCS[val](*args)
+            return self.resolve(val)             # bare cell ref like D7 (same table)
+        raise CalcError(f"Unexpected token {val!r}")
+
+XL_ATOM_RE = re.compile(r"(?:'[^']*'!|\w+!)?\$?[A-Z]+\$?\d+|\d+\.?\d*(?:[eE][-+]?\d+)?|\.\d+|\"[^\"]*\"|\$\w+\.\w+|\w+\.\w+\.\w+:\w+\.\w+\.\w+")
+
+def xl_wrap(x):
+    """Bracket an Excel sub-expression unless it is a single cell, number, string or function call."""
+    if XL_ATOM_RE.fullmatch(x):
+        return x
+    m = re.match(r"[A-Z][A-Z0-9.]*\(", x)
+    if m:
+        depth = 0
+        for i in range(m.end() - 1, len(x)):
+            depth += (x[i] == "(") - (x[i] == ")")
+            if depth == 0:
+                return x if i == len(x) - 1 else f"({x})"
+    return f"({x})"
+
+def xl_unwrap(x):
+    """Drop one pair of brackets around the whole formula: (D8*2.205) -> D8*2.205."""
+    if x.startswith("(") and x.endswith(")"):
+        depth = 0
+        for i, ch in enumerate(x):
+            depth += (ch == "(") - (ch == ")")
+            if depth == 0:
+                return x[1:-1] if i == len(x) - 1 else x
+    return x
+
+class ExcelFormula(Parser):
+    """Same grammar as Parser, but builds an Excel formula string instead of a number.
+    References are turned into cell addresses by `resolve`; f_ functions via EXCEL_FUNCS."""
+    def expr(self):
+        v = self.term()
+        while self.peek()[1] in ("+", "-"):
+            op = self.take()[1]; v = f"{v}{op}{self.term()}"
+        return v
+    def term(self):
+        v = self.factor()
+        while self.peek()[1] in ("*", "/"):
+            op = self.take()[1]; v = f"{v}{op}{self.factor()}"
+        return v
+    def factor(self):
+        kind, val = self.peek()
+        if val in ("-", "+"):
+            self.take(); f = self.factor()
+            return f"-{f}" if val == "-" else f
+        if val == "(":
+            self.take(); v = self.expr(); self.take(")"); return f"({v})"
+        if kind in ("num", "str", "lkp", "rng"):
+            self.take(); return val
+        if kind in ("ref", "xref"):
+            self.take(); return self.resolve(val)
+        if kind == "name":
+            self.take()
+            if self.peek()[1] == "(":
+                if val not in EXCEL_FUNCS:
+                    raise CalcError(f"No Excel form for function {val}")
+                self.take("(")
+                args = []
+                if self.peek()[1] != ")":
+                    args.append(self.expr())
+                    while self.peek()[1] == ",":
+                        self.take(); args.append(self.expr())
+                self.take(")")
+                return xl_wrap(EXCEL_FUNCS[val](*[xl_wrap(a) for a in args]))
+            return self.resolve(val)                 # bare cell ref like D7
+        raise CalcError(f"Unexpected token {val!r}")
+
+# ---------------- where a row's fields sit in Excel ----------------
+def id_col(row_id):
+    """Column number of the cell a row id starts at: "B8" -> 2, "A13" -> 1 (no letters -> 2 = B)."""
+    from openpyxl.utils import column_index_from_string
+    m = re.match(r"\$?([A-Za-z]{1,3})\$?\d", str(row_id).strip())
+    return column_index_from_string(m[1].upper()) if m else 2
+
+def row_num(row_id):
+    """Excel row of a row id: "A13" -> 13."""
+    m = re.search(r"\d+", str(row_id))
+    if not m:
+        raise CalcError(f"Bad row id {row_id!r}")
+    return int(m.group())
+
+def shift_col(letter, by):
+    """Column letter moved right by `by` columns: shift_col("B", -1) -> "A"."""
+    from openpyxl.utils import column_index_from_string, get_column_letter
+    return get_column_letter(max(1, column_index_from_string(letter) + by))
+
+def fixed_cols(row_id):
+    """Fixed layout, starting at the id's cell: "B8" -> description B, unit1 C, value1 D, value2 E,
+    unit2 F, notes G; "A13" -> description A, unit1 B, value1 C, value2 D, unit2 E, notes F."""
+    by = id_col(row_id) - 2
+    return {k: shift_col(c, by) for k, c in {"description": "B", "unit1": "C", "unit": "C", "value1": "D",
+            "value": "D", "value2": "E", "unit2": "F", "notes": "G"}.items()}
+
+# ---------------- extra columns ----------------
+FIXED_KEYS = {"id", "description", "unit1", "unit", "value1", "value2", "value", "unit2", "notes", "computed",
+              "merge", "merged", "merged_cells"}
+MERGE_ORDER = ["unit1", "unit", "value1", "value", "value2", "unit2"]   # fields after a merged description
+
+def extra_columns(table):
+    """Other keys of a table's rows, e.g. "ultimate tensile strength" -> Excel column H, I, ... in order of
+    first appearance. They are calculated like value1/value2 and can be referred to by cell (@T.H11)."""
+    from openpyxl.utils import get_column_letter
+    cols = {}
+    for r in table["rows"]:
+        for k in r:
+            if k not in FIXED_KEYS and k not in cols:
+                cols[k] = get_column_letter(8 + len(cols))          # 8 = H, after notes in G
+    return cols
+
+def read_pairs(pairs):
+    """json.loads hook. "merged": "C12:D12" applies to the field written just before it (right after
+    "id", or first: the description), so one row can merge several fields:
+        "description": ..., "merged": "A12:B12", "value1": ..., "merged": "C12:D12"
+    They are collected in "merged_cells": {"description": "A12:B12", "value1": "C12:D12"}.
+    Other keys written twice are listed in "_duplicate_keys" (the last value is used)."""
+    obj, dup, merges, prev = {}, [], {}, None
+    for k, v in pairs:
+        if k in ("merged", "merge"):
+            field = prev if prev not in (None, "id") else "description"
+            if field in merges:
+                dup.append(f"merged (after {field})")
+            merges[field] = v
+            continue
+        if k in obj and k not in dup:
+            dup.append(k)
+        obj[k] = v
+        prev = k
+    if merges:
+        obj["merged_cells"] = merges
+    if dup:
+        obj["_duplicate_keys"] = dup
+    return obj
+
+def merge_ranges(row):
+    """{field: (first column, first row, last column, last row)} of a row's merged cells
+    ("merged_cells": {"description": "A12:B12", "value1": "C12:D12"}, see read_pairs)."""
+    from openpyxl.utils import range_boundaries
+    out = {}
+    for field, rng in row.get("merged_cells", {}).items():
+        if not isinstance(rng, str):
+            raise CalcError(f"Bad merge {field}: {rng!r} (write a range like \"A5:C5\")")
+        try:
+            b = range_boundaries(str(rng).replace("$", "").replace(" ", "").upper())
+        except (ValueError, TypeError):
+            raise CalcError(f"Bad merge {field}: {rng!r}")
+        if None in b:
+            raise CalcError(f"Bad merge {field}: {rng!r}")
+        if field not in row:
+            raise CalcError(f"Bad merge: row has no field {field!r}")
+        out[field] = b
+    return out
+
+def row_cols(row, extra):
+    """Excel column of each field of a row: {"description": "B", "unit1": "C", "value1": "D", ...}.
+    Without "merged": the fixed layout from the id's cell (fixed_cols), extra columns after notes.
+    With "merged": fields go in order - description, unit1, value1, value2, unit2, extra columns (row
+    order), notes/errors - starting at the id's cell. A merged field sits exactly on its range; the
+    other fields take the next free column after the previous field, skipping merged ranges:
+      description merged A5:C5                     -> unit1 D5, value1 E5
+      description merged A12:B12, value1 C12:D12   -> unit1 E12"""
+    from openpyxl.utils import get_column_letter as L
+    if "merged_cells" not in row:
+        by = id_col(row["id"]) - 2
+        return {**fixed_cols(row["id"]), **{k: shift_col(c, by) for k, c in extra.items()}}
+    ranges = merge_ranges(row)
+    taken = {}                                           # column no. -> field using it
+    def take(k, c1, c2):
+        for c in range(c1, c2 + 1):
+            if c in taken:
+                raise CalcError(f"Bad merge: {k} and {taken[c]} both use column {L(c)}")
+            taken[c] = k
+    for k, (c1, _, c2, _) in ranges.items():
+        take(k, c1, c2)
+    cols, n = {}, id_col(row["id"]) - 1                  # n = last column of the previous field
+    for k in ["description"] + MERGE_ORDER + [k for k in row if k not in FIXED_KEYS]:
+        if k not in row or k in cols:
+            continue
+        if k in ranges:
+            c1, c2 = ranges[k][0], ranges[k][2]
+        else:
+            c1 = n + 1
+            while c1 in taken:                           # skip merged ranges / used columns
+                c1 += 1
+            c2 = c1
+            take(k, c1, c2)
+        cols[k], n = L(c1), c2
+    cols["notes"] = L(max(taken) + 1)
+    return cols
+
+# ---------------- workbook evaluator ----------------
+class Workbook:
+    def __init__(self, tables, inputs=None):
+        self.tables = {t["Table_id"]: t for t in tables}
+        self.inputs = inputs or {}           # {"enquiry_sheet.abc": 500, "@TABLE.D11": 2257, ...}
+        self.cache, self.stack, self.errors = {}, [], {}
+        for tid, t in self.tables.items():
+            for r in t.get("rows", []):
+                dup = r.pop("_duplicate_keys", None)
+                if dup:
+                    self.errors[f"{tid}.{r.get('id')}.keys"] = (
+                        f"key written twice: {', '.join(dup)} - only the last one is used")
+                for k in ("merged", "merge"):       # rows not read by read_pairs: the description
+                    if k in r and "merged_cells" not in r:
+                        r["merged_cells"] = {"description": r.pop(k)}
+                cells = [c for c in re.split(r"[,:\s]+", str(r.get("id", ""))) if c]
+                if len(cells) > 1:                   # "id": "A13,B13" -> row A13, description merged A13:B13
+                    r["id"] = cells[0]
+                    r.setdefault("merged_cells", {"description": f"{cells[0]}:{cells[-1]}"})
+        self.extra = {tid: extra_columns(t) for tid, t in self.tables.items()}   # key -> column H, I, ...
+
+    def _keys(self, table_id):
+        """Calculated keys of a table: value1, value2, value + its extra columns."""
+        return VALUE_KEYS + list(self.extra.get(table_id, {}))
+
+    def _col(self, table_id, key, row_id):
+        """Excel column of `key` in row `row_id` (None if unknown)."""
+        try:
+            return row_cols(self._find_row(table_id, row_id), self.extra.get(table_id, {})).get(key)
+        except CalcError:
+            return None
+
+    def _cell_key(self, table_id, cell):
+        """'D7' -> (table_id, row id, 'value1'): the field of row 7 that sits in column D
+        (an extra column like 'H11' -> its key; rows with "merged" use their own columns)"""
+        m = re.fullmatch(r"([A-Z]+)(\d+)", cell)
+        if not m:
+            raise CalcError(f"Bad cell {cell}")
+        if table_id not in self.tables:
+            raise CalcError(f"Unknown table {table_id}")
+        row = self._find_row(table_id, f"B{m.group(2)}")
+        keys = self._keys(table_id)
+        cols = {c: k for k, c in row_cols(row, self.extra.get(table_id, {})).items() if k in keys}
+        if m.group(1) not in cols:
+            raise CalcError(f"Can't map cell {cell} (row {m.group(2)} has values in {sorted(cols)})")
+        return (table_id, row["id"], cols[m.group(1)])
+
+    def _find_row(self, table_id, row_id):
+        rows = self.tables[table_id]["rows"]
+        for r in rows:
+            if r["id"] == row_id:
+                return r
+        n = re.sub(r"\D", "", row_id)                 # same Excel row: "B11" finds the row "A11"
+        for r in rows:
+            if n and re.sub(r"\D", "", r["id"]) == n:
+                return r
+        raise CalcError(f"Row {row_id} not found in {table_id}")
+
+    def value(self, table_id, row_id, key):
+        if key in ("value1", "value"):             # single-value rows use "value" (column D)
+            row = self._find_row(table_id, row_id)
+            if key not in row:
+                key = "value" if key == "value1" else "value1"
+        k = (table_id, row_id, key)
+        if k in self.cache:
+            return self.cache[k]
+        if k in self.stack:
+            chain = " -> ".join(f"{t}.{r}.{c}" for t, r, c in self.stack + [k])
+            raise CalcError(f"Circular reference: {chain}")
+        # user-supplied override for this cell (e.g. the '???' inputs): "@T1.B9.value1" or "@T1.D9"
+        col = self._col(table_id, key, row_id)
+        for override in (f"{table_id}.{row_id}.{key}", f"{table_id}.{col}{row_id[1:]}"):
+            if override in self.inputs:
+                self.cache[k] = self.inputs[override]
+                return self.cache[k]
+
+        self.stack.append(k)
+        try:
+            raw = self._find_row(table_id, row_id).get(key)
+            self.cache[k] = self._eval_raw(raw, table_id)
+            return self.cache[k]
+        finally:
+            self.stack.pop()
+
+    def _eval_raw(self, raw, table_id):
+        if raw is None or raw in ("-", ""):
+            return None
+        if isinstance(raw, (int, float)):
+            return raw
+        if raw.strip() == "???":
+            raise CalcError("Missing input ('???') - supply it via inputs")
+        if not raw.startswith("="):
+            try:
+                return float(raw)
+            except ValueError:
+                return raw                          # plain text
+        return Parser(tokenize(raw[1:]), lambda ref: self._resolve(ref, table_id)).parse()
+
+    def _resolve(self, ref, current_table):
+        # allow table refs written without '@' (T1.D8 -> @T1.D8) unless it is an external input
+        if not ref.startswith("@") and ref not in self.inputs and "@" + ref.split(".")[0] in self.tables:
+            ref = "@" + ref
+        if ref.startswith("@"):
+            parts = ref.split(".")
+            tid = parts[0]
+            if tid not in self.tables:
+                raise CalcError(f"Unknown table {tid}")
+            if len(parts) == 2:                       # @T.D7
+                return self._need_num(self.value(*self._cell_key(tid, parts[1])), ref)
+            if len(parts) == 3:                       # @T.value1.B7 or @T.B7.value1
+                keys = self._keys(tid)
+                key, row = (parts[1], parts[2]) if parts[1] in keys else (parts[2], parts[1])
+                if key not in keys:
+                    raise CalcError(f"Bad reference {ref} (expected one of {keys})")
+                return self._need_num(self.value(tid, row, key), ref)
+        elif "." in ref:                              # external: enquiry_sheet.abc
+            if ref not in self.inputs:
+                raise CalcError(f"External input '{ref}' not supplied")
+            return self.inputs[ref]
+        else:                                         # bare D7 -> current table
+            return self._need_num(self.value(*self._cell_key(current_table, ref)), ref)
+        raise CalcError(f"Bad reference {ref}")
+
+    @staticmethod
+    def _need_num(v, ref):
+        if v is None:
+            raise CalcError(f"{ref} is empty")
+        return v
+
+    def evaluate_all(self):
+        """Compute every value cell; store result in row['computed'][key]. Errors are collected, not fatal."""
+        for tid, t in self.tables.items():
+            for r in t["rows"]:
+                r["computed"] = {}
+                for key in self._keys(tid):
+                    if key not in r:
+                        continue
+                    self.stack = []
+                    try:
+                        v = self.value(tid, r["id"], key)
+                    except (CalcError, ZeroDivisionError, TypeError) as e:
+                        v = None
+                        self.errors[f"{tid}.{r['id']}.{key}"] = str(e)
+                    r["computed"][key] = round(v, 6) if isinstance(v, float) else v
+        return self
+
+    # ---------- storage ----------
+    def save_json(self, path):
+        Path(path).write_text(json.dumps(list(self.tables.values()), indent=2), encoding="utf-8")
+
+    def save_csv(self, path):
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["table_id", "row_id", "description", "value1", "unit1", "value2", "unit2", "error",
+                        "other values"])
+            for tid, t in self.tables.items():
+                for r in t["rows"]:
+                    c = r.get("computed", {})
+                    err = "; ".join(v for k, v in self.errors.items() if k.startswith(f"{tid}.{r['id']}."))
+                    w.writerow([tid, r["id"], r.get("description"), c.get("value1", c.get("value")), r.get("unit1", r.get("unit")),
+                                c.get("value2"), r.get("unit2"), err,
+                                "; ".join(f"{k}={c[k]}" for k in self.extra[tid] if k in c)])
+
+    def save_xlsx(self, path):
+        """Excel workbook with live formulas. One worksheet per sheet (its tables together); each row sits on its original
+        Excel row (id "B9" -> row 9) in columns B..G, so D9 here is the cell the formulas refer to.
+        Enquiry values go on an 'Enquiry' sheet; sheets read via 'SHEET'!D9 are added with their
+        values. Changing any number in Excel recalculates every cell that depends on it."""
+        from openpyxl import Workbook as XlWorkbook
+        from openpyxl.styles import Font, PatternFill
+        book = XlWorkbook()
+        book.remove(book.active)
+        bold, head_fill = Font(bold=True), PatternFill("solid", fgColor="DDEBF7")
+        input_fill, err_font = PatternFill("solid", fgColor="FFF2CC"), Font(color="C00000")
+        xl_col = KEY_COL                                         # value1/value -> D, value2 -> E
+        norm = lambda s: re.sub(r"[^a-z0-9]", "", s.lower())
+
+        # ---- lay out sheets: this calc's tables ("") + linked sheets (values only).
+        # Tables of the same sheet share one worksheet, each on its own original rows. A table without
+        # sheet_name belongs to the sheet named before it. A table whose rows are already used by
+        # another table of that sheet gets a worksheet of its own, so no value is overwritten.
+        groups = [("", list(self.tables.values()))] + list(getattr(self, "linked", {}).items())
+        layout = {}                                              # (group, table id) -> (worksheet, row shift)
+        data_rows = {}                                           # worksheet title -> rows holding table data
+        def new_sheet(name):
+            name = re.sub(r"[\\/*?:\[\]]", "", name)[:31] or "Sheet"
+            while name in book.sheetnames:
+                name = name[:28] + f"_{len(book.sheetnames)}"
+            data_rows[name] = set()
+            data_cells[name] = set()
+            return book.create_sheet(name)
+        data_cells = {}                                          # worksheet title -> cells used by tables
+
+        def table_cells(t):
+            """Excel cells (column no., row no.) a table's rows use: their fields and merged ranges."""
+            from openpyxl.utils import column_index_from_string
+            ex, out = extra_columns(t), set()
+            for r in t["rows"]:
+                try:
+                    cols = row_cols(r, ex)
+                except CalcError:
+                    cols = row_cols({k: v for k, v in r.items() if k != "merged_cells"}, ex)
+                n = int(re.sub(r"\D", "", r["id"]) or 0)
+                out |= {(column_index_from_string(c), n) for k, c in cols.items() if k in r}
+                try:
+                    for c1, r1, c2, r2 in merge_ranges(r).values():
+                        out |= {(c, y) for c in range(c1, c2 + 1) for y in range(r1, r2 + 1)}
+                except CalcError:
+                    pass
+            return out
+        for g, tables in groups:
+            by_sheet, sheet = {}, None
+            for t in tables:
+                sheet = t.get("sheet_name") or sheet or t["Table_id"]
+                by_sheet.setdefault(sheet, []).append(t)
+            for sheet, ts in by_sheet.items():
+                shift = 0                                # every cell exactly where the JSON says
+                ws = new_sheet(sheet)
+                for t in ts:
+                    target, t_shift = ws, 0
+                    cells = table_cells(t)
+                    if cells & data_cells[ws.title]:             # cells taken by another table
+                        target = new_sheet(f"{sheet} {t['Table_id']}")
+                    data_cells[target.title] |= cells
+                    data_rows[target.title] |= {n for _, n in cells}
+                    layout[(g, t["Table_id"])] = (target, t_shift)
+
+        enq = book.create_sheet("Enquiry")
+        enq["A1"], enq["B1"] = "Input", "Value"
+        enq["A1"].font = enq["B1"].font = bold
+        enq_row = {}
+        def enquiry_cell(name):
+            if name not in enq_row:
+                n = enq_row[name] = len(enq_row) + 2
+                enq[f"A{n}"] = name
+                if name in self.inputs:
+                    enq[f"B{n}"] = self.inputs[name]
+                else:
+                    enq[f"B{n}"].fill = input_fill                   # not supplied yet - fill it in
+            return f"Enquiry!$B${enq_row[name]}"
+        for name in self.inputs:
+            if not name.startswith("@"):
+                enquiry_cell(name)
+
+        # ---- lookup tables, each on its own sheet at its original rows (B17..), for VLOOKUP
+        from openpyxl.utils import get_column_letter
+        LOOKUP_XL.clear()
+        for lname, lt in LOOKUPS.items():
+            name = re.sub(r"[\\/*?:\[\]]", "", lt.get("Vlookup_table_name") or lt["Vlookup_table_id"])[:31]
+            while name in book.sheetnames:
+                name = name[:28] + f"_{len(book.sheetnames)}"
+            lws = book.create_sheet(name)
+            ncol = len(lt.get("columns", []))
+            lrows = [(int(r["id"][1:]), r) for r in lt["rows"]]
+            first = min((n for n, _ in lrows), default=3)
+            shift = max(0, 3 - first)
+            lws["B1"], lws["B1"].font = f"{name} ({lname})", Font(bold=True, size=12)
+            for i, c in enumerate(lt["columns"], 1):
+                h = lws.cell(row=first + shift - 1, column=i + 1, value=c.get("display_name", c["key"]))
+                h.font, h.fill = bold, head_fill
+                lws.column_dimensions[get_column_letter(i + 1)].width = 16
+            for n, r in lrows:
+                for i in range(1, ncol + 1):
+                    lws.cell(row=n + shift, column=i + 1, value=lookup_cell(lt, r, i))
+            last = max((n for n, _ in lrows), default=first) + shift
+            LOOKUP_XL[lname] = (name, shift)
+
+        # ---- reference -> Excel address
+        extra_by = {(g, t["Table_id"]): extra_columns(t) for g, ts in groups for t in ts}   # key -> H, I, ...
+
+        tables_of = {(g, t["Table_id"]): t for g, ts in groups for t in ts}
+
+        def row_of(g, tid, row_id):
+            """Row by id, or by Excel row number ("B11" finds "A11")."""
+            rows = tables_of[(g, tid)]["rows"]
+            n = re.sub(r"\D", "", row_id)
+            hit = next((r for r in rows if r["id"] == row_id), None) or next(
+                (r for r in rows if n and re.sub(r"\D", "", r["id"]) == n), None)
+            if hit is None:
+                raise CalcError(f"Row {row_id} not found in {tid}")
+            return hit
+
+        def addr(g, tid, row_id, key, here):
+            if (g, tid) not in layout:
+                raise CalcError(f"Unknown table {tid}")
+            ws, shift = layout[(g, tid)]
+            r = row_of(g, tid, row_id)
+            cols = row_cols(r, extra_by[(g, tid)])
+            if key not in r and key in ("value1", "value"):   # single-value rows use "value"
+                key = "value" if key == "value1" else "value1"
+            col = cols.get(key)
+            if col is None:
+                raise CalcError(f"{tid} row {row_id} has no {key}")
+            cell = f"{col}{int(re.sub(r'\D', '', r['id'])) + shift}"
+            return cell if ws is here else "'" + ws.title.replace("'", "''") + "'!" + cell
+
+        def row_key(parts, ref, g, tid):
+            extra = extra_by.get((g, tid), {})
+            if len(parts) == 1:
+                m = re.fullmatch(r"([A-Z]+)(\d+)", parts[0].replace("$", ""))
+                if not m:
+                    raise CalcError(f"Bad reference {ref}")
+                r = row_of(g, tid, f"B{m.group(2)}")
+                keys = VALUE_KEYS + list(extra)
+                cols = {c: k for k, c in row_cols(r, extra).items() if k in keys}
+                if m.group(1) not in cols:
+                    raise CalcError(f"Can't map cell {parts[0]} (row {m.group(2)} has values in {sorted(cols)})")
+                return r["id"], cols[m.group(1)]
+            if len(parts) == 2:
+                keys = VALUE_KEYS + list(extra)
+                key, row_id = (parts[0], parts[1]) if parts[0] in keys else (parts[1], parts[0])
+                if key in keys:
+                    return row_id, key
+            raise CalcError(f"Bad reference {ref}")
+
+        def xl_ref(ref, g, tid, here):
+            if "!" in ref:                                   # 'THERMAL - VAP'!D9 / !@T1.B9.value1
+                sheet, target = ref.rsplit("!", 1)
+                g2 = norm(sheet.strip("'"))
+                tids = [t2 for (gg, t2) in layout if gg == g2]
+                if not tids:
+                    raise CalcError(f"Sheet {sheet} not loaded")
+                parts = target.replace("$", "").lstrip("@").split(".")
+                if len(parts) > 1 and "@" + parts[0] in tids:
+                    tids, parts = ["@" + parts[0]], parts[1:]
+                row_id, key = row_key(parts, ref, g2, tids[0])
+                tid2 = next((t2 for t2 in tids for r in dict(groups)[g2] if r["Table_id"] == t2
+                             and any(x["id"] == row_id for x in r["rows"])), tids[0])
+                return addr(g2, tid2, row_id, key, here)
+            parts = ref.split(".")
+            if not ref.startswith("@") and ref not in self.inputs and (g, "@" + parts[0]) in layout:
+                parts[0] = "@" + parts[0]                    # T1.D8 -> @T1.D8
+            if parts[0].startswith("@"):
+                return addr(g, parts[0], *row_key(parts[1:], ref, g, parts[0]), here)
+            if "." in ref:                                   # enquiry_sheet.abc
+                return enquiry_cell(ref)
+            return addr(g, tid, *row_key([ref], ref, g, tid), here)  # bare D7
+
+        # ---- write the rows
+        for g, tables in groups:
+            for t in tables:
+                tid = t["Table_id"]
+                ws, shift = layout[(g, tid)]
+                if ws["B1"].value is None:           # sheet title
+                    ws["B1"] = ws.title + ("  - values from linked sheet" if g else "")
+                    ws["B1"].font = Font(bold=True, size=13)
+                # table title + header just above the table's first row, only on rows nothing else uses
+                first = min((int(r["id"][1:]) for r in t["rows"]), default=4) + shift
+                heads = {} if t.get("columns") else {"B": "Description", "C": "Unit", "D": "Value1",
+                                                        "E": "Value2", "F": "Unit2"}
+                for c in t.get("columns", []):
+                    col = HEADER_COL.get(c["key"])
+                    if col:
+                        heads[col] = c.get("display_name", c["key"])
+                heads["G"] = "Notes / errors (last Python run)"
+                names = {c["key"]: c.get("display_name", c["key"]) for c in t.get("columns", [])}
+                for k, col in extra_by[(g, tid)].items():
+                    heads[col] = names.get(k, k.title())
+                labels = []                          # (column, line, name) of extra columns to label
+                label_above = any("merged_cells" in r for r in t["rows"])
+                if label_above:
+                    heads = {}                       # columns differ per row - no common header
+                by = id_col(min(t["rows"], key=lambda r: row_num(r["id"]))["id"]) - 2 if t["rows"] else 0
+                heads = {shift_col(c, by): h for c, h in heads.items()}
+                title = {shift_col("B", by): f"{t.get('Table_name', '')} ({tid})"}
+                for line, cells in ((first - 2, title), (first - 1, heads)):
+                    if line < 2 or line in data_rows[ws.title] or any(ws[f"{c}{line}"].value for c in cells):
+                        continue
+                    for col, h in cells.items():
+                        c = ws[f"{col}{line}"]
+                        c.value, c.font = h, bold
+                        if line == first - 1:
+                            c.fill = head_fill
+                for r in t["rows"]:
+                    line = int(r["id"][1:]) + shift
+                    notes = [] if g else [v for k, v in self.errors.items() if k.startswith(f"{tid}.{r['id']}.")]
+                    extra = extra_by[(g, tid)]
+                    bad_merge = False
+                    try:
+                        cols = row_cols(r, extra)
+                    except CalcError as e:           # bad "merged" - fixed layout, note the problem
+                        bad_merge = True
+                        cols = row_cols({k: v for k, v in r.items() if k != "merged_cells"}, extra)
+                        notes.append(str(e))
+                    for key in ("description", "unit1", "unit", "unit2"):
+                        if key in r:
+                            ws[f"{cols[key]}{line}"] = r[key]
+                    if "merged_cells" in r and not bad_merge:
+                        for field, (c1, r1, c2, r2) in merge_ranges(r).items():
+                            if r1 + shift != line:
+                                notes.append(f"merge {field} skipped: not on row {line - shift}")
+                            elif c2 > c1 or r2 > r1:
+                                ws.merge_cells(start_row=r1 + shift, start_column=c1, end_row=r2 + shift, end_column=c2)
+                    for key in VALUE_KEYS + list(extra):
+                        if key not in r:                     # value1/value2 or value - never both in D
+                            continue
+                        cell = ws[f"{cols[key]}{line}"]
+                        raw = r.get(key)
+                        if label_above and key in extra:
+                            labels.append((cols[key], line, names.get(key, key)))
+                        if g:                                # linked sheet: plain values
+                            cell.value = r.get("computed", {}).get(key)
+                        elif isinstance(raw, str) and raw.startswith("="):
+                            try:
+                                f = ExcelFormula(tokenize(raw[1:]), lambda ref: xl_ref(ref, g, tid, ws)).parse()
+                                cell.value = "=" + xl_unwrap(f)
+                            except (CalcError, TypeError) as e:
+                                notes.append(f"{key}: formula not converted ({e})")
+                        elif isinstance(raw, str) and raw.strip() == "???":
+                            cell.fill = input_fill           # missing input - type it in Excel
+                        elif raw not in (None, "-", ""):
+                            try:
+                                cell.value = float(raw) if isinstance(raw, str) else raw
+                            except ValueError:
+                                cell.value = raw
+                        if not isinstance(cell.value, str) or cell.value.startswith("="):
+                            cell.number_format = "#,##0.000"
+                    if notes or r.get("notes"):
+                        ws[f"{cols['notes']}{line}"] = "; ".join(notes) or r.get("notes")
+                        if notes:
+                            ws[f"{cols['notes']}{line}"].font = err_font
+                # names of extra columns ("ultimate tensile strength") in the cell just above their value;
+                # if that cell is in use, as a comment on the value instead - nothing is overwritten
+                from openpyxl.comments import Comment
+                for col, line, name in labels:
+                    above = ws[f"{col}{line - 1}"] if line > 1 else None
+                    if above is not None and above.value is None and above.coordinate not in ws.merged_cells:
+                        above.value, above.font = name, bold
+                    else:
+                        ws[f"{col}{line}"].comment = Comment(name, "calc engine")
+                for col, w in zip("ABCDEFG", [3, 36, 12, 16, 16, 12, 60]):
+                    ws.column_dimensions[col].width = w
+                for col in extra_by[(g, tid)].values():
+                    ws.column_dimensions[col].width = 22
+        enq.column_dimensions["A"].width, enq.column_dimensions["B"].width = 40, 20
+        book.calculation.fullCalcOnLoad = True               # Excel computes every formula on open
+        book.save(path)
+
+    def report(self):
+        for tid, t in self.tables.items():
+            print(f"\n== {t['Table_name']} ({tid}) ==")
+            for r in t["rows"]:
+                c = r.get("computed", {})
+                fmt = lambda v: f"{v:,.3f}" if isinstance(v, (int, float)) else str(v if v is not None else "-")
+                other = "  ".join(f"{k}={fmt(c[k])}" for k in self.extra[tid] if k in c)
+                print(f"{r['id']:<4} {r['description']:<36} {fmt(c.get('value1', c.get('value'))):>16} {r.get('unit1', r.get('unit', '')):<7}"
+                      f" {fmt(c.get('value2')):>16} {r.get('unit2','')}" + (f"   {other}" if other else ""))
+        if self.errors:
+            print("\nErrors:")
+            for k, v in self.errors.items():
+                print(f"  {k}: {v}")
+
+
+NUM_WITH_UNIT_RE = re.compile(r"^\s*([-+]?\d+\.?\d*(?:[eE][-+]?\d+)?)\s*[A-Za-z(/%]")
+
+def load_enquiry(path):
+    """Read an enquiry JSON ({"fields": {name: {"value": ...}}}) into
+    {"enquiry_sheet.<name>": value}. Numbers with units ("1000 kg/hr") become floats;
+    fields with a null value are left out so they report as 'not supplied'."""
+    fields = json.loads(Path(path).read_text(encoding="utf-8")).get("fields", {})
+    inputs = {}
+    for name, f in fields.items():
+        v = f.get("value") if isinstance(f, dict) else f
+        if v is None:
+            continue
+        if isinstance(v, str):
+            s = v.strip()
+            try:
+                v = float(s)
+            except ValueError:
+                m = NUM_WITH_UNIT_RE.match(s)
+                if m:
+                    v = float(m.group(1))
+        inputs[f"enquiry_sheet.{name}"] = v
+    return inputs
+
+
+def run(json_path, enquiry_path=None, out_path=None):
+    """Evaluate one calc JSON (optionally with an enquiry sheet), print the report and
+    save <out_path>.json / .csv (default: <json stem>_computed in the current folder)."""
+    json_path = Path(json_path)
+    tables = json.loads(json_path.read_text(encoding="utf-8"), object_pairs_hook=read_pairs)
+    inputs = load_enquiry(enquiry_path) if enquiry_path else {}
+    load_lookups(json_path.parent)                 # lookup table JSONs next to the calc JSON
+    wb = Workbook(tables, inputs).evaluate_all()
+    wb.report()
+    out = Path(out_path) if out_path else Path(json_path.stem + "_computed")
+    wb.save_json(f"{out}.json")
+    wb.save_csv(f"{out}.csv")
+    wb.save_xlsx(f"{out}.xlsx")
+    print(f"\nSaved {out.name}.json, {out.name}.csv and {out.name}.xlsx")
+    return wb
+
+
+if __name__ == "__main__":
+    import sys
+    HERE = Path(__file__).resolve().parent
+    # optional overrides: python vap_press_dens_calc_engine.py [calc json] [enquiry json]
+    CALC_JSON = sys.argv[1] if len(sys.argv) > 1 else HERE.parent / "json" / "sample vap press-dens json.json"
+    ENQUIRY_JSON = sys.argv[2] if len(sys.argv) > 2 else HERE.parent / "enquiry" / "cl2 enquiry.json"
+    OUTPUT = HERE / "vap_press_dens_computed"       # -> vap_press_dens_computed.json / .csv / .xlsx
+    # constants are written directly in the calc JSON as plain numbers
+    run(CALC_JSON, ENQUIRY_JSON, OUTPUT)

@@ -103,6 +103,7 @@ export default function SpecExtractionPage() {
         onFindSimilarProjects={() =>
           navigate(`/similar-projects/${threadId}?equipment_index=${activeIndex}`)
         }
+        onDesignCalc={() => navigate(`/design-calc/${threadId}?equipment_index=${activeIndex}`)}
       />
 
       <WorkflowProgress />

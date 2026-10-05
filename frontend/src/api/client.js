@@ -47,4 +47,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ equipment_index: equipmentIndex }),
     }),
+  getDesignCalc: (threadId, equipmentIndex) =>
+    request(`/threads/${threadId}/design-calc?equipment_index=${equipmentIndex}`),
+  runDesignCalc: (threadId, equipmentIndex) =>
+    request(`/threads/${threadId}/design-calc`, {
+      method: "POST",
+      body: JSON.stringify({ equipment_index: equipmentIndex }),
+    }),
+  editDesignCalcCell: (threadId, cell) =>
+    request(`/threads/${threadId}/design-calc/cell`, {
+      method: "PUT",
+      body: JSON.stringify(cell),
+    }),
+  designCalcXlsxUrl:(threadId, equipmentIndex) =>
+    `${BASE}/threads/${threadId}/design-calc/xlsx?equipment_index=${equipmentIndex}`,
 };

@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .database import Base, engine, SessionLocal, ensure_schema_migrations
-from .routers import threads, emails, gmail_webhook, specification
+from .routers import threads, emails, gmail_webhook, specification, design_calc
 from . import sync_service
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ app.include_router(threads.router)
 app.include_router(emails.router)
 app.include_router(gmail_webhook.router)
 app.include_router(specification.router)
+app.include_router(design_calc.router)
 
 
 @app.get("/api/health")

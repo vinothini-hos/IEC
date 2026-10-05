@@ -6,6 +6,8 @@ import SpecExtractionPickerPage from "./pages/SpecExtractionPickerPage";
 import SpecExtractionPage from "./pages/SpecExtractionPage";
 import SimilarProjectsPickerPage from "./pages/SimilarProjectsPickerPage";
 import SimilarProjectsPage from "./pages/SimilarProjectsPage";
+import DesignCalcPickerPage from "./pages/DesignCalcPickerPage";
+import DesignCalcPage from "./pages/DesignCalcPage";
 
 export default function App() {
   return (
@@ -20,6 +22,8 @@ export default function App() {
           <Route path="/spec-extraction/:threadId" element={<SpecExtractionPage />} />
           <Route path="/similar-projects" element={<SimilarProjectsPickerPage />} />
           <Route path="/similar-projects/:threadId" element={<SimilarProjectsPage />} />
+          <Route path="/design-calc" element={<DesignCalcPickerPage />} />
+          <Route path="/design-calc/:threadId" element={<DesignCalcPage />} />
         </Routes>
       </div>
     </div>

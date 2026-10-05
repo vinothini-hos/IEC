@@ -75,6 +75,14 @@ class Settings(BaseSettings):
     rag_history_dir_so2: str = "./rag_history/SO2"
     rag_history_dir_cl2: str = "./rag_history/CL2"
 
+    # Design calculation sheets (see design_calc.py) — folder holding the
+    # per-sheet calc engine scripts (each with its own f_def functions), the
+    # folder of calc + VLOOKUP table JSONs they evaluate, and where each
+    # thread's computed results + .xlsx files get saved
+    design_calc_engine_dir: str = "./design_calc_inputs/engines"
+    design_calc_json_dir: str = "./design_calc_inputs/json"
+    design_calc_storage_dir: str = "./storage/design_calc"
+
     # LLM backend — local Ollama server (see llm_client.py). Replaces the
     # earlier direct Anthropic/Claude calls in extraction.py,
     # template_consolidation.py, and rag_justification.py.

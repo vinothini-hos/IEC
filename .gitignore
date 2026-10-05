@@ -8,3 +8,7 @@ backend/credentials/
 backend/storage/
 backend/rag_history/
 backend/sample_data/
+backend/design_calc_inputs/json/
+
+# design calc engines run standalone (python <sheet>_calc_engine.py) write these
+backend/design_calc_inputs/engines/*_computed.*
