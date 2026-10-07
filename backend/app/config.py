@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     gmail_user_email: str = "me"  # "me" = the authenticated account
     gmail_pubsub_topic: str = ""  # e.g. projects/<project>/topics/gmail-notifications
     gmail_poll_interval_seconds: int = 30  # background auto-sync cadence
+    # Also sync threads Gmail filed under Spam, so client RFQs misclassified
+    # as spam still reach the RFQ inbox (real spam will show up there too)
+    gmail_sync_include_spam: bool = True
 
     # Local disk storage for attachments on mail we receive, downloaded
     # from Gmail during sync (attachments we send are not persisted)

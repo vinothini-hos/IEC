@@ -13,12 +13,10 @@ Formula language supported (value strings starting with "="):
     =f_vlookup(value, VLOOKUP1.B17.nb:VLOOKUP1.B20.od, col)   same, Excel-style range
     =VLOOKUP(...)            same as f_vlookup
                      (sheet_id.Vlookup_table_id; col = number or column name; 0 exact, 1 approx)
-    =f_def1(a) 273+a                                        degC -> K
-    =f_def2(a) EXP(71.33+(-3855/a)-8.5171*LN(a)+0.01237*a^1)  Cl2 vapour pressure, Pa (a = T in K)
-    =f_def3(a) a/100000   Pa -> bar(a)       =f_def4(a) a-1.01325   bar(a) -> bar(g)
-    =f_def5(a) 2.23/0.27645^(1+(1-(a/417.15))^0.2926)       Cl2 liquid density, kmol/m3 (a = T in K)
-    =f_def6(a) 70.91*a                                      kmol/m3 -> kg/m3
-    plain arithmetic: + - * / ( )  e.g. =@T.D7*2.205
+    =LN(a)  =LOG10(a)  =EXP(a)  =SQRT(a)  =ABS(a)
+    =f_def1(...), =f_def2(...), ...  formulas from the def JSON ("sample vap press-dens def.json"),
+                     arguments a, b, c, ... in order - see load_defs
+    plain arithmetic: + - * / ^ ( )  e.g. =@T.D7*2.205
     references:
         @TABLE_ID.D7        -> cell D7 in table TABLE_ID (column letter -> value key via COLUMN_MAP)
         @TABLE_ID.value1.B7 -> explicit key + row id (alternative form)
@@ -45,6 +43,63 @@ KEY_COL = {"value1": "D", "value2": "E", "value": "D"}   # "value": single-value
 HEADER_COL = {"description": "B", "unit1": "C", "unit": "C", "value1": "D", "value": "D",
               "value2": "E", "unit2": "F", "notes": "G"}      # table column key -> Excel column
 
+
+def _math_fn(name, fn):
+    """A math function that reports a bad argument (LN(0), SQRT(-1), text) as a CalcError."""
+    def call(*args):
+        for v in args:
+            if not isinstance(v, (int, float)):
+                raise CalcError(f"{name}: argument is text ({v!r}), expected a number")
+        try:
+            return fn(*args)
+        except (ValueError, OverflowError):
+            raise CalcError(f"{name}({', '.join(f'{v:.6g}' for v in args)}) is undefined")
+    return call
+
+def f_power(a, b):
+    """a ^ b, as Excel: a negative base with a fractional exponent is an error, not a complex number."""
+    for v in (a, b):
+        if not isinstance(v, (int, float)):
+            raise CalcError(f"^: argument is text ({v!r}), expected a number")
+    if a < 0 and not float(b).is_integer():
+        raise CalcError(f"{a:.6g}^{b:.6g} is undefined")
+    return a ** b
+
+# ---------------- def functions (f_def1, f_def2, ...) ----------------
+# Loaded from the sheet's def JSON ("sample vap press-dens def.json"):
+#     {"functions": {"f_def1": {"formula": "a*2.205"}, "f_def3": {"formula": "(a+b)/2"}, ...}}
+# The arguments of a call are a, b, c, ... in order, so =f_def3(D10, D11) is (D10+D11)/2.
+# A def can instead list its own names: {"params": ["od", "thk"], "formula": "(od-(2*thk))/2"}.
+DEFS = {}         # "f_def1" -> {"params": [...], "formula": "...", "tokens": [...]}
+
+def load_defs(path):
+    """Load the "functions" of a def JSON into DEFS, checking each formula parses and uses only its params."""
+    DEFS.clear()
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    for name, spec in (data.get("functions") or {}).items():
+        if not isinstance(spec, dict) or "formula" not in spec:
+            raise CalcError(f"{Path(path).name}: {name} needs a \"formula\"")
+        tokens = tokenize(str(spec["formula"]).lstrip("="))
+        names = {v for i, (k, v) in enumerate(tokens)
+                 if k == "name" and (i + 1 == len(tokens) or tokens[i + 1][1] != "(")}
+        params = spec.get("params")
+        if params is None:
+            bad = sorted(n for n in names if not re.fullmatch(r"[a-z]", n))
+            if bad:
+                raise CalcError(f"{Path(path).name}: {name} uses {bad} - write arguments as a, b, c, ... "
+                                f"or list them in \"params\"")
+            params = [chr(c) for c in range(ord("a"), max(map(ord, names), default=ord("a") - 1) + 1)]
+        unknown = sorted(names - set(params))
+        if unknown:
+            raise CalcError(f"{Path(path).name}: {name} uses {unknown}, not in its params {params}")
+        DEFS[name] = {"params": list(params), "formula": spec["formula"], "tokens": tokens}
+    return DEFS
+
+def _def_env(name, args):
+    d = DEFS[name]
+    if len(args) != len(d["params"]):
+        raise CalcError(f"{name} expects {len(d['params'])} argument(s) ({', '.join(d['params'])}), got {len(args)}")
+    return d["tokens"], dict(zip(d["params"], args))
 
 # ---------------- VLOOKUP tables ----------------
 LOOKUPS = {}      # "$sheet1.VLOOKUP_001" -> lookup table JSON (sheet_id + Vlookup_table_id)
@@ -165,16 +220,13 @@ FUNCS = {
     "f_round": lambda a, n=0: round(a, int(n)),
     "f_vlookup": f_vlookup,          # VLOOKUP on a lookup table JSON
     "VLOOKUP": f_vlookup,            # same, Excel spelling: =VLOOKUP(value, VLOOKUP1.B36.nb:VLOOKUP1.B63.od, 2)
-    # fixed-factor definitions
-    # vapour pressure / density formulas: add each here AND in EXCEL_FUNCS below
-    "f_def1": lambda a: 273 + a,                      # degC -> K
-    # DIPPR eq. 101 for Cl2: exp(A + B/T + C*ln(T) + D*T^E), C = -8.5171
-    "f_def2": lambda a: math.exp(71.33 + (-3855 / a) - 8.5171 * math.log(a) + 0.01237 * a ** 1),  # Pa
-    "f_def3": lambda a: a / 100000,                   # Pa -> bar(a)
-    "f_def4": lambda a: a - 1.01325,                  # bar(a) -> bar(g)
-    # DIPPR eq. 105 for Cl2: A / B^(1 + (1 - T/Tc)^D)
-    "f_def5": lambda a: 2.23 / 0.27645 ** (1 + (1 - (a / 417.15)) ** 0.2926),  # kmol/m3
-    "f_def6": lambda a: 70.91 * a,                    # kmol/m3 -> kg/m3 (Cl2 molar mass)
+    # Excel math functions, for def formulas ("LN((a-b)/(c-d))") and calc JSONs alike
+    "LN": _math_fn("LN", math.log),
+    "LOG10": _math_fn("LOG10", math.log10),
+    "EXP": _math_fn("EXP", math.exp),
+    "SQRT": _math_fn("SQRT", math.sqrt),
+    "ABS": _math_fn("ABS", abs),
+    # f_def1, f_def2, ... come from the sheet's def JSON (DEFS), see load_defs
 }
 
 # Excel versions of FUNCS, used when writing formulas to the .xlsx (arguments arrive already bracketed)
@@ -189,12 +241,11 @@ EXCEL_FUNCS = {
     "f_round": lambda a, n="0": f"ROUND({a},{n})",
     "f_vlookup": xl_vlookup,
     "VLOOKUP": xl_vlookup,
-    "f_def1": lambda a: f"273+{a}",
-    "f_def2": lambda a: f"EXP(71.33+(-3855/{a})-8.5171*LN({a})+0.01237*{a}^1)",
-    "f_def3": lambda a: f"{a}/100000",
-    "f_def4": lambda a: f"{a}-1.01325",
-    "f_def5": lambda a: f"2.23/0.27645^(1+(1-({a}/417.15))^0.2926)",
-    "f_def6": lambda a: f"70.91*{a}",
+    "LN": lambda a: f"LN({xl_unwrap(a)})",          # the call's own brackets are enough
+    "LOG10": lambda a: f"LOG10({xl_unwrap(a)})",
+    "EXP": lambda a: f"EXP({xl_unwrap(a)})",
+    "SQRT": lambda a: f"SQRT({xl_unwrap(a)})",
+    "ABS": lambda a: f"ABS({xl_unwrap(a)})",
 }
 
 class CalcError(Exception):
@@ -209,7 +260,7 @@ TOKEN_RE = re.compile(r"""
   | (?P<ref>@?[A-Za-z_][\w]*(?:\.[\w]+)+(?:[ \t]+[A-Za-z_]\w*)*)   # @T.D7, @T.B11.value1, enquiry_sheet.abc,
                                                 # @T.B11.ultimate tensile strength (field names with spaces)
   | (?P<name>[A-Za-z_]\w*)                      # function names / bare cell refs
-  | (?P<op>[-+*/(),])
+  | (?P<op>[-+*/^(),])
   | (?P<ws>\s+)
 """, re.X)
 
@@ -249,11 +300,36 @@ class Parser:
             v = v + r if op == "+" else v - r
         return v
     def term(self):
-        v = self.factor()
+        v = self.power()
         while self.peek()[1] in ("*", "/"):
-            op = self.take()[1]; r = self.factor()
+            op = self.take()[1]; r = self.power()
             v = v * r if op == "*" else v / r
         return v
+    def power(self):
+        """a^b binds tighter than * and /, left to right like Excel (2^3^2 = 64; -2^2 = 4)."""
+        v = self.factor()
+        while self.peek()[1] == "^":
+            self.take(); v = self.pow_op(v, self.factor())
+        return v
+    def pow_op(self, a, b):
+        return f_power(a, b)
+    def args(self):
+        self.take("(")
+        args = []
+        if self.peek()[1] != ")":
+            args.append(self.expr())
+            while self.peek()[1] == ",":
+                self.take(); args.append(self.expr())
+        self.take(")")
+        return args
+    def call_def(self, name, args):
+        """Evaluate a def formula with its params bound to the call's argument values."""
+        tokens, env = _def_env(name, args)
+        def resolve(n):
+            if n not in env:
+                raise CalcError(f"{name}: unknown name {n}")
+            return env[n]
+        return Parser(tokens, resolve).parse()
     def factor(self):
         kind, val = self.peek()
         if val == "-":
@@ -273,16 +349,12 @@ class Parser:
         if kind == "name":
             self.take()
             if self.peek()[1] == "(":            # function call
+                if val in DEFS:
+                    return self.call_def(val, self.args())
                 if val not in FUNCS:
-                    raise CalcError(f"Unknown function {val}")
-                self.take("(")
-                args = []
-                if self.peek()[1] != ")":
-                    args.append(self.expr())
-                    while self.peek()[1] == ",":
-                        self.take(); args.append(self.expr())
-                self.take(")")
-                return FUNCS[val](*args)
+                    hint = " - is it in the sheet's def JSON?" if val.startswith("f_def") else ""
+                    raise CalcError(f"Unknown function {val}{hint}")
+                return FUNCS[val](*self.args())
             return self.resolve(val)             # bare cell ref like D7 (same table)
         raise CalcError(f"Unexpected token {val!r}")
 
@@ -320,10 +392,20 @@ class ExcelFormula(Parser):
             op = self.take()[1]; v = f"{v}{op}{self.term()}"
         return v
     def term(self):
-        v = self.factor()
+        v = self.power()
         while self.peek()[1] in ("*", "/"):
-            op = self.take()[1]; v = f"{v}{op}{self.factor()}"
+            op = self.take()[1]; v = f"{v}{op}{self.power()}"
         return v
+    def pow_op(self, a, b):
+        return f"{a}^{b}"
+    def call_def(self, name, args):
+        """The def formula as Excel, with its params replaced by the arguments' cell addresses."""
+        tokens, env = _def_env(name, [xl_wrap(a) for a in args])
+        def resolve(n):
+            if n not in env:
+                raise CalcError(f"{name}: unknown name {n}")
+            return env[n]
+        return xl_wrap(ExcelFormula(tokens, resolve).parse())
     def factor(self):
         kind, val = self.peek()
         if val in ("-", "+"):
@@ -338,16 +420,11 @@ class ExcelFormula(Parser):
         if kind == "name":
             self.take()
             if self.peek()[1] == "(":
+                if val in DEFS:
+                    return self.call_def(val, self.args())
                 if val not in EXCEL_FUNCS:
                     raise CalcError(f"No Excel form for function {val}")
-                self.take("(")
-                args = []
-                if self.peek()[1] != ")":
-                    args.append(self.expr())
-                    while self.peek()[1] == ",":
-                        self.take(); args.append(self.expr())
-                self.take(")")
-                return xl_wrap(EXCEL_FUNCS[val](*[xl_wrap(a) for a in args]))
+                return xl_wrap(EXCEL_FUNCS[val](*[xl_wrap(a) for a in self.args()]))
             return self.resolve(val)                 # bare cell ref like D7
         raise CalcError(f"Unexpected token {val!r}")
 
@@ -918,7 +995,7 @@ class Workbook:
                 c = r.get("computed", {})
                 fmt = lambda v: f"{v:,.3f}" if isinstance(v, (int, float)) else str(v if v is not None else "-")
                 other = "  ".join(f"{k}={fmt(c[k])}" for k in self.extra[tid] if k in c)
-                print(f"{r['id']:<4} {r['description']:<36} {fmt(c.get('value1', c.get('value'))):>16} {r.get('unit1', r.get('unit', '')):<7}"
+                print(f"{r['id']:<4} {r.get('description', ''):<36} {fmt(c.get('value1', c.get('value'))):>16} {r.get('unit1', r.get('unit', '')):<7}"
                       f" {fmt(c.get('value2')):>16} {r.get('unit2','')}" + (f"   {other}" if other else ""))
         if self.errors:
             print("\nErrors:")
@@ -957,6 +1034,10 @@ def run(json_path, enquiry_path=None, out_path=None):
     tables = json.loads(json_path.read_text(encoding="utf-8"), object_pairs_hook=read_pairs)
     inputs = load_enquiry(enquiry_path) if enquiry_path else {}
     load_lookups(json_path.parent)                 # lookup table JSONs next to the calc JSON
+    stem = re.sub(r" json$", "", json_path.stem)   # "sample x json" -> "sample x def.json"
+    defs = json_path.with_name(f"{stem} def.json")
+    if defs.is_file():
+        load_defs(defs)
     wb = Workbook(tables, inputs).evaluate_all()
     wb.report()
     out = Path(out_path) if out_path else Path(json_path.stem + "_computed")

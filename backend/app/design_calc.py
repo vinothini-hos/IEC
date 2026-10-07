@@ -14,7 +14,8 @@ exactly the {"fields": {key: {"value": ...}}} shape the engines' load_enquiry
 reads.
 
 To add a sheet: drop its engine into design_calc_engine_dir, its calc/VLOOKUP JSONs
-into design_calc_json_dir, and add an entry to SHEETS. `linked` lists sheets
+into design_calc_json_dir, and add an entry to SHEETS. `defs` (optional) names
+the JSON holding that sheet's f_def formulas, for engines with load_defs. `linked` lists sheets
 whose computed values it reads ('THERMAL - VAP'!D9) - those run first and are
 passed in as `linked`.
 """
@@ -35,20 +36,7 @@ SHEETS = [
         "label": "Thermal Vap",
         "engine": "thermal_vap_calc_engine.py",
         "calc_json": "sample thermal vap.json",
-        "linked": [],
-    },
-    {
-        "key": "steam",
-        "label": "Steam",
-        "engine": "steam_calc_engine.py",
-        "calc_json": "sample steam json.json",
-        "linked": ["thermal_vap"],
-    },
-    {
-        "key": "wall_thick",
-        "label": "Wall Thickness",
-        "engine": "wall_thick_calc_engine.py",
-        "calc_json": "sample wall thick json.json",
+        "defs": "sample thermal vap def.json",
         "linked": [],
     },
     {
@@ -56,13 +44,31 @@ SHEETS = [
         "label": "Piping",
         "engine": "piping_calc_engine.py",
         "calc_json": "sample piping json.json",
+        "defs": "sample piping def.json",
         "linked": [],
+    },
+    {
+        "key": "steam",
+        "label": "Steam",
+        "engine": "steam_calc_engine.py",
+        "calc_json": "sample steam json.json",
+        "defs": "sample steam def.json",
+        "linked": ["thermal_vap"],
     },
     {
         "key": "vap_press_dens",
         "label": "Vap Press / Density",
         "engine": "vap_press_dens_calc_engine.py",
         "calc_json": "sample vap press-dens json.json",
+        "defs": "sample vap press-dens def.json",
+        "linked": [],
+    },
+    {
+        "key": "wall_thick",
+        "label": "Wall Thickness",
+        "engine": "wall_thick_calc_engine.py",
+        "calc_json": "sample wall thick json.json",
+        "defs": "sample wall thick def.json",
         "linked": [],
     },
 ]
@@ -160,6 +166,8 @@ def _run_sheet(sheet, enquiry_path, computed, out_dir, overrides):
     inputs = _enquiry_inputs(engine, enquiry_path)
     engine.LOOKUPS.clear()
     engine.load_lookups(calc_path.parent)
+    if sheet.get("defs"):                   # f_def formulas from the sheet's def JSON
+        engine.load_defs(calc_path.parent / sheet["defs"])
 
     if sheet["linked"]:
         wb = engine.Workbook(tables, inputs, _linked_tables(sheet, computed))
@@ -184,6 +192,9 @@ _SHEET_REF_RE = re.compile(r"('(?:[^']|'')+'|[A-Za-z_][\w.]*)!(\$?[A-Z]{1,3}\$?\
 
 
 def _quote_sheet(name):
+    """VLOOKUP1 stays bare, as Excel writes it; 'Thermal vap' needs quotes."""
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) and not re.fullmatch(r"[A-Za-z]{1,3}\d+", name):
+        return name
     return "'" + name.replace("'", "''") + "'"
 
 
@@ -242,53 +253,55 @@ def _copy_sheet(src, dst, fix_formula):
 
 
 def _combine_workbooks(paths, out_path, lookup_sheets=()):
-    """Merge the engines' per-sheet workbooks into one with only the calc
-    sheets, keeping formulas live:
-    - the Enquiry sheet and the VLOOKUP table sheets (`lookup_sheets`) are
-      left out; a reference to an enquiry input becomes its value
-      ('Enquiry'!$B$45 -> 1000), a VLOOKUP range becomes the table as an
-      array constant (VLOOKUP(D17,{6,10.3;8,13.7},2,FALSE)), so lookups
-      still follow the cells they read;
-    - each engine's linked-sheet value copy (steam's "Thermal vap" values) is
-      dropped, so its 'Thermal vap'!D9 formulas point at the real sheet;
+    """Merge the engines' per-sheet workbooks into one, keeping formulas live:
+    - the Enquiry sheet is left out; a reference to an enquiry input becomes
+      its value ('Enquiry'!$B$45 -> 1000);
+    - the VLOOKUP table sheets (`lookup_sheets`) are kept, hidden, after all the
+      calc sheets, so lookups stay as ranges: VLOOKUP(D37,VLOOKUP1!$B$36:$C$63,2,FALSE);
+    - each engine's linked-sheet value copy (steam's "Thermal vap" values) and
+      any VLOOKUP sheet identical to one already taken are dropped, so their
+      references point at the sheet already in the combined book;
     - any other clash of names is renamed "<name> (2)" and references to it
       rewritten."""
     from openpyxl import Workbook, load_workbook
     book = Workbook()
     book.remove(book.active)
-    inline = {ENQUIRY_SHEET, *lookup_sheets}
+    planned = {}                            # combined-book title -> source sheet
+    calc_todo, lookup_todo = [], []
 
     for path in paths:
         src = load_workbook(path)           # formulas come back as strings
-        rename, todo = {}, []
-        for ws in src.worksheets:
-            if ws.title in inline:
-                continue
-            if ws.title in book.sheetnames and (
-                    LINKED_SHEET_MARK in str(ws["B1"].value or "") or _same_values(ws, book[ws.title])):
-                continue                    # use the sheet already in the combined book
-            title, n = ws.title, 2
-            while title in book.sheetnames:
-                title = f"{ws.title[:26]} ({n})"
-                n += 1
-            rename[ws.title] = title
-            todo.append((ws, title))
+        rename = {}
 
         def fix_formula(f, src=src, rename=rename):
             def sheet_ref(m):
                 name = m[1][1:-1].replace("''", "'") if m[1].startswith("'") else m[1]
                 first, last = m[2].replace("$", ""), m[3] and m[3].replace("$", "")
-                if name in inline and name in src.sheetnames:
-                    ws = src[name]
-                    if not last:                # a blank cell counts as 0, as in Excel
-                        return _xl_literal(ws[first].value, "0")
-                    rows = ws[f"{first}:{last}"]
-                    return "{" + ";".join(",".join(_xl_literal(c.value, '""') for c in r) for r in rows) + "}"
+                if name == ENQUIRY_SHEET and name in src.sheetnames and not last:
+                    return _xl_literal(src[name][first].value, "0")   # a blank cell counts as 0, as in Excel
                 return _quote_sheet(rename.get(name, name)) + "!" + m[2] + (f":{m[3]}" if m[3] else "")
             return _SHEET_REF_RE.sub(sheet_ref, f)
 
-        for ws, title in todo:
-            _copy_sheet(ws, book.create_sheet(title), fix_formula)
+        for ws in src.worksheets:
+            if ws.title == ENQUIRY_SHEET:
+                continue
+            taken = planned.get(ws.title)
+            if taken is not None and (
+                    LINKED_SHEET_MARK in str(ws["B1"].value or "") or _same_values(ws, taken)):
+                continue                    # use the sheet already in the combined book
+            title, n = ws.title, 2
+            while title in planned:
+                title = f"{ws.title[:26]} ({n})"
+                n += 1
+            planned[title] = ws
+            rename[ws.title] = title
+            todo = lookup_todo if ws.title in lookup_sheets else calc_todo
+            todo.append((ws, title, fix_formula))
+
+    for ws, title, fix_formula in calc_todo + lookup_todo:
+        _copy_sheet(ws, book.create_sheet(title), fix_formula)
+    for _, title, _ in lookup_todo if calc_todo else []:   # Excel needs one visible sheet
+        book[title].sheet_state = "hidden"  # still there for the ranges; Unhide to inspect
 
     if not book.sheetnames:
         book.create_sheet("Design calc")
@@ -390,7 +403,11 @@ def load_result(thread_id: uuid.UUID, equipment_index: int):
     path = Path(settings.design_calc_storage_dir) / str(thread_id) / str(equipment_index) / "result.json"
     if not path.is_file() or path.stat().st_mtime < _inputs_mtime(thread_id, equipment_index):
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    result = json.loads(path.read_text(encoding="utf-8"))
+    # results saved before a SHEETS reorder still come back in SHEETS order
+    order = {s["key"]: i for i, s in enumerate(SHEETS)}
+    result["sheets"].sort(key=lambda e: order.get(e["key"], len(order)))
+    return result
 
 
 def xlsx_path(thread_id: uuid.UUID, equipment_index: int):

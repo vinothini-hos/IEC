@@ -125,9 +125,17 @@ def fetch_thread(gmail_thread_id: str, my_email: str) -> list[dict]:
 
 def fetch_recent_thread_ids(max_results: int = 25) -> list[str]:
     service = get_service()
-    resp = service.users().messages().list(
-        userId="me", maxResults=max_results, labelIds=["INBOX"]
-    ).execute()
+    if settings.gmail_sync_include_spam:
+        # labelIds is AND-ed, so use a search query to get INBOX or SPAM;
+        # includeSpamTrash is required for SPAM results to come back at all
+        resp = service.users().messages().list(
+            userId="me", maxResults=max_results,
+            q="in:inbox OR in:spam", includeSpamTrash=True,
+        ).execute()
+    else:
+        resp = service.users().messages().list(
+            userId="me", maxResults=max_results, labelIds=["INBOX"]
+        ).execute()
     thread_ids = []
     for m in resp.get("messages", []):
         if m["threadId"] not in thread_ids:
