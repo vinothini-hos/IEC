@@ -584,8 +584,8 @@ def _format_email_for_prompt(email) -> str:
 
 def extract_specification_for_thread(thread) -> list:
     """Given a Thread ORM object (with .emails and .emails[*].attachments loaded),
-    extract from the single most recent downloaded attachment in the thread and
-    run the LLM extraction on it.
+    extract from the body of every email in the thread plus the single most
+    recent downloaded attachment, and run the LLM extraction on them.
 
     Deliberately NOT all attachments — this only ever reads the latest one
     (e.g. the customer's clarification-reply spec sheet), by send date/time,
@@ -596,10 +596,9 @@ def extract_specification_for_thread(thread) -> list:
     prior extraction already ran for this equipment item."""
     emails_sorted = sorted(thread.emails, key=lambda e: e.sent_at)
 
-    # Email body is temporarily left out of the prompt — attachments only
-    # for now. Restore the line below (join of _format_email_for_prompt per
-    # email) to bring the email body back in.
-    email_body = ""
+    # Every message's body, oldest to newest, so specs written in the email
+    # text are extracted alongside the latest attachment.
+    email_body = "\n\n".join(_format_email_for_prompt(e) for e in emails_sorted)
 
     downloaded = [
         (email, attachment)
