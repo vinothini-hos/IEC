@@ -92,6 +92,26 @@ Opens on `http://localhost:5173`, proxying `/api` to the backend on
 | POST   | `/api/emails/send`          | Send new email or reply           |
 | PATCH  | `/api/emails/{id}/read`     | Mark read/unread                  |
 | POST   | `/api/gmail/webhook`        | Pub/Sub push receiver             |
+| GET    | `/api/threads/{id}/draft-boq` | An equipment item's drawings + combined BOQ |
+| POST   | `/api/threads/{id}/draft-boq` | Upload a .dwg/.dxf/.svg P&ID for an equipment item and count it |
+| DELETE | `/api/threads/{id}/draft-boq/{drawing}` | Remove one drawing      |
+
+### Draft BOQ (component count)
+
+Per RFQ thread and equipment item: upload one or more P&ID drawings (sheets),
+each counted against its own legend tables (`SYMBOLS | DESCRIPTION`); the
+equipment item's draft BOQ is the counts of all its drawings added up. The scripts in
+`backend/component_count/scripts/` do the work and run as-is:
+
+- `.dxf` → `count_by_DXF.py`
+- `.svg` → `count_by_svg.py`
+- `.dwg` → `convert_dwg_to_dxf.py` → `convert_dxf_to_svg.py`, then
+  `count_by_DXF.py` on the DXF (falls back to `count_by_svg.py` on the SVG
+  if the DXF counter finds no legend)
+
+DWG uploads need the free **ODA File Converter** installed (opendesign.com →
+Guest Files → ODA File Converter). Each drawing's files are saved under
+`backend/storage/component_count/<thread_id>/<equipment_index>/<drawing_id>/`.
 
 ## Notes / next steps
 

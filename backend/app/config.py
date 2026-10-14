@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     design_calc_json_dir: str = "./design_calc_inputs/json"
     design_calc_storage_dir: str = "./storage/design_calc"
 
+    # Component count from uploaded P&ID drawings (see component_count.py) -
+    # folder holding the DWG/DXF/SVG conversion + counting scripts, and where
+    # each upload's run folder (drawing, converted/check files, result) is saved
+    component_count_script_dir: str = "./component_count/scripts"
+    component_count_storage_dir: str = "./storage/component_count"
+
     # LLM backend — local Ollama server (see llm_client.py). Replaces the
     # earlier direct Anthropic/Claude calls in extraction.py,
     # template_consolidation.py, and rag_justification.py.

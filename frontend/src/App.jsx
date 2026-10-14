@@ -8,6 +8,8 @@ import SimilarProjectsPickerPage from "./pages/SimilarProjectsPickerPage";
 import SimilarProjectsPage from "./pages/SimilarProjectsPage";
 import DesignCalcPickerPage from "./pages/DesignCalcPickerPage";
 import DesignCalcPage from "./pages/DesignCalcPage";
+import DraftBoqPickerPage from "./pages/DraftBoqPickerPage";
+import DraftBoqPage from "./pages/DraftBoqPage";
 
 export default function App() {
   return (
@@ -24,6 +26,8 @@ export default function App() {
           <Route path="/similar-projects/:threadId" element={<SimilarProjectsPage />} />
           <Route path="/design-calc" element={<DesignCalcPickerPage />} />
           <Route path="/design-calc/:threadId" element={<DesignCalcPage />} />
+          <Route path="/draft-boq" element={<DraftBoqPickerPage />} />
+          <Route path="/draft-boq/:threadId" element={<DraftBoqPage />} />
         </Routes>
       </div>
     </div>

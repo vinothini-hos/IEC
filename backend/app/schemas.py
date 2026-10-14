@@ -44,6 +44,11 @@ class ThreadListItemOut(BaseModel):
     latest_direction: Optional[str] = None
     extraction_status: Optional[str] = None
     classification_summary: Optional[str] = None
+    # whether the later modules have saved results for this thread - lets their
+    # pickers list only the RFQs already worked on
+    has_similar_projects: bool = False
+    has_design_calc: bool = False
+    draft_boq_drawings: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -68,6 +73,11 @@ class ClarificationIn(BaseModel):
 
 class SimilarProjectsIn(BaseModel):
     equipment_index: int = 0
+
+
+class DraftBoqCountIn(BaseModel):
+    index: int  # position in the drawing's components list
+    count: Optional[int] = None  # None reverts to the detected count
 
 
 class DesignCalcIn(BaseModel):

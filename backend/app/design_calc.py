@@ -396,6 +396,11 @@ def _inputs_mtime(thread_id: uuid.UUID, equipment_index: int) -> float:
     return max((p.stat().st_mtime for p in paths if p.is_file()), default=0)
 
 
+def has_result(thread_id) -> bool:
+    """Any equipment item of this thread has a saved calculation."""
+    return any((Path(settings.design_calc_storage_dir) / str(thread_id)).glob("*/result.json"))
+
+
 def load_result(thread_id: uuid.UUID, equipment_index: int):
     """Last saved result, or None if there isn't one or it's stale - an
     engine, calc JSON or the extraction changed since it was calculated -

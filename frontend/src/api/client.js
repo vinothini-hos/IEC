@@ -61,4 +61,21 @@ export const api = {
     }),
   designCalcXlsxUrl:(threadId, equipmentIndex) =>
     `${BASE}/threads/${threadId}/design-calc/xlsx?equipment_index=${equipmentIndex}`,
+  getDraftBoq: (threadId, equipmentIndex) =>
+    request(`/threads/${threadId}/draft-boq?equipment_index=${equipmentIndex}`),
+  uploadDraftBoqDrawing: (threadId, equipmentIndex, file) => {
+    const form = new FormData();
+    form.append("equipment_index", String(equipmentIndex));
+    form.append("file", file);
+    return request(`/threads/${threadId}/draft-boq`, { method: "POST", body: form });
+  },
+  editDraftBoqCount: (threadId, runId, index, count) =>
+    request(`/threads/${threadId}/draft-boq/${runId}/count`, {
+      method: "PUT",
+      body: JSON.stringify({ index, count }),
+    }),
+  deleteDraftBoqDrawing: (threadId, runId) =>
+    request(`/threads/${threadId}/draft-boq/${runId}`, { method: "DELETE" }),
+  draftBoqFileUrl: (threadId, runId, name) =>
+    `${BASE}/threads/${threadId}/draft-boq/${runId}/files/${name}`,
 };

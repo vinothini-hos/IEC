@@ -5,7 +5,13 @@ const STATUS_LABEL = {
   waiting_for_customer_response: "Waiting on customer",
 };
 
-export default function ProjectListItem({ thread, onClick }) {
+/** One RFQ in a module's list. The status pill defaults to the extraction
+ * status; other modules pass their own (`status` = { label, className }). */
+export default function ProjectListItem({ thread, onClick, status }) {
+  const pill = status || {
+    label: STATUS_LABEL[thread.extraction_status] || thread.extraction_status,
+    className: `project-status-${thread.extraction_status}`,
+  };
   return (
     <div className="thread-item" onClick={onClick}>
       <div className="thread-item-top">
@@ -17,9 +23,7 @@ export default function ProjectListItem({ thread, onClick }) {
         {thread.classification_summary && (
           <span className="project-list-item-classification">{thread.classification_summary}</span>
         )}
-        <span className={`project-status-pill project-status-${thread.extraction_status}`}>
-          {STATUS_LABEL[thread.extraction_status] || thread.extraction_status}
-        </span>
+        <span className={`project-status-pill ${pill.className}`}>{pill.label}</span>
       </div>
     </div>
   );

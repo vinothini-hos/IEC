@@ -1,11 +1,12 @@
 import { useEffect, useState, useCallback } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import EquipmentTabs from "../components/SpecExtraction/EquipmentTabs";
 import CalcTable from "../components/DesignCalc/CalcTable";
 
 export default function DesignCalcPage() {
   const { threadId } = useParams();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const equipmentIndex = Number(searchParams.get("equipment_index") || 0);
 
@@ -115,6 +116,13 @@ export default function DesignCalcPage() {
           )}
         </div>
         <div className="spec-header-actions">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => navigate(`/draft-boq/${threadId}?equipment_index=${equipmentIndex}`)}
+          >
+            Draft BOQ
+          </button>
           <button type="button" className="btn-secondary" disabled={running} onClick={runCalc}>
             {running ? "Calculating…" : calcResult ? "Recalculate" : "Run calculation"}
           </button>

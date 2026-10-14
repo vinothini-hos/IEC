@@ -61,6 +61,14 @@ export const CalculatorIcon = () => (
   </svg>
 );
 
+export const ListChecksIcon = () => (
+  <svg {...base}>
+    <path d="m3 7 2 2 4-4" />
+    <path d="m3 17 2 2 4-4" />
+    <path d="M13 6h8M13 12h8M13 18h8" />
+  </svg>
+);
+
 export const PlugIcon = () => (
   <svg {...base}>
     <path d="M12 22v-5" />

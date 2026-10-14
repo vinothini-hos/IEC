@@ -7,6 +7,7 @@ import "./styles/mailbox.css";
 import "./styles/spec-extraction.css";
 import "./styles/similar-projects.css";
 import "./styles/design-calc.css";
+import "./styles/draft-boq.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

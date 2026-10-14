@@ -23,3 +23,13 @@ sentence-transformers>=3.0.0
 torch==2.13.0
 rank-bm25>=0.2.2
 fpdf2>=2.8.0
+# Component count from P&ID drawings (component_count/scripts) - DWG input
+# also needs the free ODA File Converter installed (opendesign.com)
+ezdxf>=1.3.0
+svgelements>=1.9.6
+opencv-python-headless>=4.9.0
+pymupdf>=1.24.0
+# reads legend names in SVGs whose text is drawn as outlines - also needs the
+# Tesseract OCR program (C:\Program Files\Tesseract-OCR); without it those
+# names fall back to SYMBOL_1, SYMBOL_2 ...
+pytesseract>=0.3.10

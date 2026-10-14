@@ -134,6 +134,14 @@ def find_similar_projects(equipment_item: dict, top_k: int = 10) -> dict:
     }
 
 
+def has_saved_result(thread_id) -> bool:
+    """Any saved run for this thread, in the timestamped
+    <equipment_index>_<type>-<timestamp>-<thread_id>.json naming that the
+    GET endpoint reads back (older un-timestamped files aren't loadable)."""
+    out_dir = Path(settings.similar_projects_storage_dir) / str(thread_id)
+    return any(out_dir.glob("*-*.json"))
+
+
 def save_similar_projects_result(thread_id, equipment_index: int, result: dict) -> str:
     """Writes a new timestamped file per run (full history kept) rather than
     overwriting - see routers/specification.py's GET endpoint, which reads

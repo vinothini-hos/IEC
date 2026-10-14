@@ -1,10 +1,11 @@
 import { Link, useLocation } from "react-router-dom";
 import {
-  InboxIcon, BookIcon, LayersIcon, CopyCheckIcon, CalculatorIcon, PlugIcon, UsersIcon, SlidersIcon,
+  InboxIcon, BookIcon, LayersIcon, CopyCheckIcon, CalculatorIcon, ListChecksIcon, PlugIcon, UsersIcon, SlidersIcon,
 } from "./Icons";
 
 /**
- * "RFQ Inbox", "Spec Extraction", "Similar Projects", and "Design Calc" are wired up. The
+ * "RFQ Inbox", "Spec Extraction", "Similar Projects", "Design Calc", and "Draft BOQ"
+ * are wired up. The
  * rest of the workflow items reflect the broader RFQ-to-proposal app this
  * mailbox lives in, and are placeholders until those modules exist.
  *
@@ -32,6 +33,10 @@ const GROUPS = [
       {
         key: "design-calc", label: "Design Calc", icon: CalculatorIcon, to: "/design-calc",
         isActive: (p) => p.startsWith("/design-calc"),
+      },
+      {
+        key: "draft-boq", label: "Draft BOQ", icon: ListChecksIcon, to: "/draft-boq",
+        isActive: (p) => p.startsWith("/draft-boq"),
       },
     ],
   },
