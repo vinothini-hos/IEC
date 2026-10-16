@@ -4,9 +4,18 @@ import { api } from "../api/client";
 import EquipmentTabs from "../components/SpecExtraction/EquipmentTabs";
 
 const ACCEPT = ".dwg,.dxf,.svg";
-const ALL = "all"; // view key for the combined BOQ of every drawing
 
 /** Components grouped by legend table category, keeping legend order. */
+/** The server's own message ("detail") from an API error, e.g. a duplicate upload. */
+function apiErrorMessage(err) {
+  const match = /\{.*\}$/s.exec(err.message || "");
+  try {
+    return (match && JSON.parse(match[0]).detail) || err.message;
+  } catch {
+    return err.message;
+  }
+}
+
 function groupByCategory(components) {
   const groups = [];
   for (const c of components) {
@@ -162,8 +171,8 @@ export default function DraftBoqPage() {
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [boq, setBoq] = useState(null); // { drawings, combined, total }
-  const [view, setView] = useState(ALL); // ALL or a drawing's run_id
+  const [boq, setBoq] = useState(null); // { drawings }
+  const [view, setView] = useState(null); // run_id of the drawing shown (null = none open)
   const [uploading, setUploading] = useState(null); // file name being counted
   const [error, setError] = useState(null);
   const [dragOver, setDragOver] = useState(false);
@@ -179,7 +188,7 @@ export default function DraftBoqPage() {
     setLoading(true);
     setBoq(null);
     setError(null);
-    setView(ALL);
+    setView(null);
 
     (async () => {
       const specData = await api.getSpecification(threadId);
@@ -190,6 +199,8 @@ export default function DraftBoqPage() {
         const data = await api.getDraftBoq(threadId, equipmentIndex);
         if (cancelled) return;
         setBoq(data);
+        // open the most recently counted drawing (the list is oldest first)
+        setView(data.drawings.length ? data.drawings[data.drawings.length - 1].run_id : null);
       }
       setLoading(false);
     })();
@@ -210,11 +221,10 @@ export default function DraftBoqPage() {
     setError(null);
     try {
       const { result } = await api.uploadDraftBoqDrawing(threadId, equipmentIndex, file);
-      const data = await loadBoq();
-      // one drawing -> show it; several -> the combined BOQ now includes the new one
-      setView(data.drawings.length > 1 ? ALL : result.run_id);
+      await loadBoq();
+      setView(result.run_id); // show the drawing just uploaded
     } catch (err) {
-      setError(err.message);
+      setError(apiErrorMessage(err));
     } finally {
       setUploading(null);
     }
@@ -222,7 +232,7 @@ export default function DraftBoqPage() {
 
   const editCount = async (drawing, index, count) => {
     await api.editDraftBoqCount(threadId, drawing.run_id, index, count);
-    await loadBoq(); // the combined BOQ adds up the edited count too
+    await loadBoq();
   };
 
   const removeDrawing = async (drawing) => {
@@ -231,7 +241,7 @@ export default function DraftBoqPage() {
     try {
       await api.deleteDraftBoqDrawing(threadId, drawing.run_id);
       await loadBoq();
-      setView(ALL);
+      setView(null);
     } catch (err) {
       setError(err.message);
     }
@@ -252,8 +262,8 @@ export default function DraftBoqPage() {
   }
 
   const drawings = boq?.drawings || [];
-  const showAll = drawings.length > 1 && view === ALL;
-  const drawing = showAll ? null : drawings.find((d) => d.run_id === view) || drawings[0];
+  // only the drawing the user clicked (or just uploaded) is shown in detail
+  const drawing = drawings.find((d) => d.run_id === view) || null;
   const preview = drawing?.files?.includes("check.svg")
     ? "check.svg"
     : drawing?.files?.includes("check.png")
@@ -272,10 +282,7 @@ export default function DraftBoqPage() {
           </h1>
           <div className="spec-classification">
             {drawings.length
-              ? <>
-                  {drawings.length} drawing{drawings.length === 1 ? "" : "s"} ·{" "}
-                  <strong>{boq.total}</strong> components in total
-                </>
+              ? `${drawings.length} drawing${drawings.length === 1 ? "" : "s"}`
               : "Upload this equipment's P&ID drawings — components are counted against each drawing's own legend tables"}
           </div>
         </div>
@@ -350,103 +357,107 @@ export default function DraftBoqPage() {
         </div>
       )}
 
-      {drawings.length > 0 && (
-        <>
-          {drawings.length > 1 && (
-            <div className="equipment-tabs">
-              <button
-                type="button"
-                className={"equipment-tab" + (showAll ? " active" : "")}
-                onClick={() => setView(ALL)}
-              >
-                All drawings
-              </button>
-              {drawings.map((d) => (
-                <button
-                  type="button"
-                  key={d.run_id}
-                  className={"equipment-tab" + (drawing?.run_id === d.run_id ? " active" : "")}
-                  onClick={() => setView(d.run_id)}
-                >
-                  {d.file_name}
-                  {!d.ok && <span className="calc-tab-dot" title="Counting failed" />}
+      {drawing && (
+        <div className={"cc-grid" + (preview ? "" : " single")}>
+          <div className="card">
+            <div className="cc-card-header">
+              <div>
+                <div className="calc-sheet-title">{drawing.file_name}</div>
+                <div className="spec-classification">
+                  Counted {new Date(drawing.ran_at).toLocaleString()}
+                </div>
+              </div>
+              <div className="cc-card-actions">
+                {drawing.ok && <span className="cc-total">Total {drawing.total}</span>}
+                <button type="button" className="btn-secondary" onClick={() => setView(null)}>
+                  Close
                 </button>
-              ))}
+              </div>
             </div>
-          )}
+            {drawing.ok ? (
+              <ComponentTable
+                components={drawing.components}
+                onEdit={(index, count) => editCount(drawing, index, count)}
+              />
+            ) : (
+              <div className="clarification-error">{drawing.error || "Counting failed"}</div>
+            )}
+          </div>
 
-          {showAll && (
+          {preview && (
             <div className="card">
               <div className="cc-card-header">
-                <div className="calc-sheet-title">Draft BOQ — all drawings combined</div>
-                <span className="cc-total">Total {boq.total}</span>
+                <div className="calc-sheet-title">Check drawing</div>
+                <a
+                  className="cc-link"
+                  href={api.draftBoqFileUrl(threadId, drawing.run_id, preview)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open full size ↗
+                </a>
               </div>
-              {drawings.some((d) => !d.ok) && (
-                <div className="clarification-error">
-                  Drawings that failed to count are left out of this total.
-                </div>
-              )}
-              <ComponentTable components={boq.combined} />
+              <a href={api.draftBoqFileUrl(threadId, drawing.run_id, preview)} target="_blank" rel="noreferrer">
+                <img
+                  className="cc-preview"
+                  src={api.draftBoqFileUrl(threadId, drawing.run_id, preview)}
+                  alt="Drawing with every counted component boxed"
+                />
+              </a>
+              <div className="cc-legend-key">
+                {drawing.counted_by === "dxf"
+                  ? "Boxes: red = found by shape, blue = by label, green = by block"
+                  : "Boxes: red = found by shape, green = by code letters, blue = ignored areas"}
+              </div>
             </div>
           )}
+        </div>
+      )}
 
-          {drawing && (
-            <div className={"cc-grid" + (preview ? "" : " single")}>
-              <div className="card">
-                <div className="cc-card-header">
-                  <div>
-                    <div className="calc-sheet-title">{drawing.file_name}</div>
-                    <div className="spec-classification">
-                      Counted {new Date(drawing.ran_at).toLocaleString()}
-                    </div>
-                  </div>
-                  <div className="cc-card-actions">
-                    {drawing.ok && <span className="cc-total">Total {drawing.total}</span>}
-                    <button type="button" className="btn-secondary" onClick={() => removeDrawing(drawing)}>
+      {drawings.length > 0 && (
+        <div className="card">
+          <div className="cc-card-header">
+            <div className="calc-sheet-title">Uploaded drawings</div>
+            {!drawing && <span className="spec-classification">Click a drawing to see its counted components</span>}
+          </div>
+          <table className="calc-table">
+            <thead>
+              <tr>
+                <th>Drawing</th>
+                <th>Type</th>
+                <th>Counted</th>
+                <th className="num">Components</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {drawings.map((d) => (
+                <tr
+                  key={d.run_id}
+                  className={"cc-drawing-row" + (d.run_id === drawing?.run_id ? " active" : "")}
+                  onClick={() => setView(d.run_id === drawing?.run_id ? null : d.run_id)}
+                >
+                  <td>{d.file_name}</td>
+                  <td>{d.file_type?.toUpperCase()}</td>
+                  <td>{new Date(d.ran_at).toLocaleString()}</td>
+                  <td className="num">{d.ok ? d.total : <span className="cc-failed">Failed</span>}</td>
+                  <td className="num">
+                    <button
+                      type="button"
+                      className="btn-secondary cc-remove-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeDrawing(d);
+                      }}
+                    >
                       Remove
                     </button>
-                  </div>
-                </div>
-                {drawing.ok ? (
-                  <ComponentTable
-                    components={drawing.components}
-                    onEdit={(index, count) => editCount(drawing, index, count)}
-                  />
-                ) : (
-                  <div className="clarification-error">{drawing.error || "Counting failed"}</div>
-                )}
-              </div>
-
-              {preview && (
-                <div className="card">
-                  <div className="cc-card-header">
-                    <div className="calc-sheet-title">Check drawing</div>
-                    <a
-                      className="cc-link"
-                      href={api.draftBoqFileUrl(threadId, drawing.run_id, preview)}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Open full size ↗
-                    </a>
-                  </div>
-                  <a href={api.draftBoqFileUrl(threadId, drawing.run_id, preview)} target="_blank" rel="noreferrer">
-                    <img
-                      className="cc-preview"
-                      src={api.draftBoqFileUrl(threadId, drawing.run_id, preview)}
-                      alt="Drawing with every counted component boxed"
-                    />
-                  </a>
-                  <div className="cc-legend-key">
-                    {drawing.counted_by === "dxf"
-                      ? "Boxes: red = found by shape, blue = by label, green = by block"
-                      : "Boxes: red = found by shape, green = by code letters, blue = ignored areas"}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

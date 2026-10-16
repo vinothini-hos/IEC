@@ -3,7 +3,9 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
-from .. import component_count, design_calc, models, rag_service, schemas, sync_service
+from .. import (
+    component_count, design_calc, models, rag_service, schemas, sync_service, template_consolidation,
+)
 from ..database import get_db
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
@@ -31,7 +33,8 @@ def list_threads(db: Session = Depends(get_db)):
             latest_snippet=latest.snippet if latest else "",
             latest_direction=latest.direction.value if latest else None,
             extraction_status=t.extraction_status,
-            classification_summary=(t.extraction_result or {}).get("classification_summary"),
+            classification_summary=(template_consolidation.refresh_labels(t.extraction_result) or {})
+            .get("classification_summary"),
             has_similar_projects=rag_service.has_saved_result(t.id),
             has_design_calc=design_calc.has_result(t.id),
             draft_boq_drawings=component_count.drawing_count(t.id),

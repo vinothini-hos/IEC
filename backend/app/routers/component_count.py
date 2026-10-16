@@ -31,15 +31,8 @@ def _check_equipment(db: Session, thread_id: uuid.UUID, equipment_index: int):
 
 @router.get("/{thread_id}/draft-boq")
 def get_draft_boq(thread_id: uuid.UUID, equipment_index: int = 0):
-    """Every drawing counted for this equipment item, plus their combined
-    counts (the item's draft BOQ)."""
-    drawings = component_count.list_runs(thread_id, equipment_index)
-    combined = component_count.combine(drawings)
-    return {
-        "drawings": drawings,
-        "combined": combined,
-        "total": sum(c["count"] for c in combined),
-    }
+    """Every drawing counted for this equipment item, each with its own counts."""
+    return {"drawings": component_count.list_runs(thread_id, equipment_index)}
 
 
 @router.post("/{thread_id}/draft-boq")
@@ -55,6 +48,8 @@ def upload_draft_boq_drawing(
     _check_equipment(db, thread_id, equipment_index)
     try:
         result = component_count.run(thread_id, equipment_index, file.filename or "", file.file.read())
+    except component_count.DuplicateDrawing as e:
+        raise HTTPException(409, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"result": result}

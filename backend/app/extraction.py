@@ -149,6 +149,11 @@ def extract_text_from_excel(path: str) -> str:
     return json.dumps(all_sheets, indent=2, ensure_ascii=False, default=str)
 
 
+# attachment types extract_text_from_attachment can read (images such as
+# email-signature logos are skipped, not sent to the model as errors)
+DOCUMENT_EXTENSIONS = (".pdf", ".docx", ".xlsx", ".xlsm", ".xls", ".csv", ".txt")
+
+
 def extract_text_from_attachment(path: str) -> str:
     ext = Path(path).suffix.lower()
     if ext == ".pdf":
@@ -239,6 +244,13 @@ and understand what is being requested.
    - A different configuration, capacity, spec, or model is mentioned for the same equipment type.
    - Example: "SO2 vaporizer - 500 kg/hr" and "SO2 vaporizer - 1000 kg/hr" are two DIFFERENT
      requested_equipments, even though both are SO2 vaporizers.
+   - SEPARATE DATASHEETS SENT TOGETHER: when one email has several attachments (e.g. one datasheet
+     per vaporizer), each attachment describes its own unit. Compare them parameter by parameter:
+     if ANY parameter value differs between them (e.g. Design Capacity 1000 kg/hr in one sheet and
+     2000 kg/hr in the other), they are DIFFERENT requested_equipments - output one entry per
+     sheet, each with only that sheet's values, never one merged entry with a higher count. Only
+     when every stated value is the same are they the same equipment (one entry, count = number
+     of identical sheets/units).
 
 4. COUNT = number of units requested for that exact equipment + configuration combination
    (sum across all mentions of the same configuration, whether in body or attachments — but do not
@@ -253,8 +265,13 @@ and understand what is being requested.
    the knowledge base definitions.
 
 8. RECENCY WHEN VALUES CONFLICT: attachments and email bodies are labeled with their send date/time,
-   ordered oldest to newest, and the single most recent attachment (if any) is explicitly marked
-   "MOST RECENT ATTACHMENT". A thread often starts with a rough enquiry, gets a clarification request,
+   ordered oldest to newest, and the attachments of the most recent email that has any are each
+   explicitly marked "MOST RECENT ATTACHMENT". This recency rule is ONLY for a later document
+   revising an earlier one. Several attachments sent together in that one email are equally recent
+   and are NOT revisions of each other - they often describe DIFFERENT equipment items (e.g. one
+   datasheet per vaporizer): never let one of them "supersede" another; apply rule 3 instead, and
+   keep each item's values with the document that states them rather than mixing values between
+   items. A thread often starts with a rough enquiry, gets a clarification request,
    and ends with the customer's revised/filled-in spec sheet — later documents supersede earlier ones.
    If two documents state DIFFERENT values for the same parameter of the same equipment item, use the
    value from the more recent document (by send date/time) and ignore the older, now-outdated value.
@@ -369,12 +386,27 @@ USER_PROMPT_TEMPLATE = """=== EMAIL THREAD ===
 {attachments_text}
 """
 
+# Added when the latest email has several datasheets and each is extracted on
+# its own (see extract_specification_for_thread) - one call per sheet, so two
+# different units can never be merged into one entry by the model.
+FOCUS_PROMPT = """
+=== FOCUS FOR THIS RUN ===
+The email that sent the attachment above also sent other attachments, which are extracted in
+separate runs. In THIS run, output ONLY the equipment described in the attachment "{filename}",
+with only that attachment's values. Use the email thread purely as context for that unit. Do not
+output equipment that is described only in the email bodies or in other attachments.
+COUNT for this run = the number of units of THIS attachment's configuration: use the quantity
+stated in this attachment; a total quantity in the email that covers several attachments
+(e.g. "2 Nos., datasheets attached") is NOT this attachment's count.
+"""
 
-def call_claude_for_extraction(email_body: str, attachments: list) -> list:
+
+def call_claude_for_extraction(email_body: str, attachments: list, focus_filename: str | None = None) -> list:
     blocks = []
-    for i, att in enumerate(attachments):
-        is_most_recent = i == len(attachments) - 1
-        tag = " — MOST RECENT ATTACHMENT" if is_most_recent else ""
+    latest_sent = max((att["sent_at"] for att in attachments), default=None)
+    for att in attachments:
+        # every attachment of the latest email is equally recent
+        tag = " — MOST RECENT ATTACHMENT" if att["sent_at"] == latest_sent else ""
         blocks.append(
             f"### Attachment: {att['filename']} (sent {att['sent_at']}{tag}) ###\n{att['text']}"
         )
@@ -384,6 +416,8 @@ def call_claude_for_extraction(email_body: str, attachments: list) -> list:
         email_body=email_body or "(empty)",
         attachments_text=attachments_text,
     )
+    if focus_filename:
+        user_prompt += FOCUS_PROMPT.format(filename=focus_filename)
     system_prompt = SYSTEM_PROMPT.format(knowledge_base=EQUIPMENT_KNOWLEDGE_BASE)
 
     raw_text = call_llm(
@@ -587,9 +621,11 @@ def extract_specification_for_thread(thread) -> list:
     extract from the body of every email in the thread plus the single most
     recent downloaded attachment, and run the LLM extraction on them.
 
-    Deliberately NOT all attachments — this only ever reads the latest one
-    (e.g. the customer's clarification-reply spec sheet), by send date/time,
-    not the LLM's judgment. Answers already confirmed from an earlier
+    Deliberately NOT every attachment in the thread — only the attachments of
+    the most recent email that has any (e.g. the customer's clarification-reply
+    spec sheet, or one datasheet per vaporizer sent together), by send
+    date/time, not the LLM's judgment. Non-document files (images such as
+    signature logos) are skipped. Answers already confirmed from an earlier
     attachment/run aren't lost: template_consolidation.py's per-field
     carry-forward (see has_real_value usage there) falls back to the
     previously-saved value for any field this run doesn't find, as long as a
@@ -597,20 +633,23 @@ def extract_specification_for_thread(thread) -> list:
     emails_sorted = sorted(thread.emails, key=lambda e: e.sent_at)
 
     # Every message's body, oldest to newest, so specs written in the email
-    # text are extracted alongside the latest attachment.
+    # text are extracted alongside the latest email's attachments.
     email_body = "\n\n".join(_format_email_for_prompt(e) for e in emails_sorted)
 
-    downloaded = [
-        (email, attachment)
+    with_documents = [
+        (email, [
+            a for a in email.attachments
+            if a.local_path and Path(a.local_path).suffix.lower() in DOCUMENT_EXTENSIONS
+        ])
         for email in emails_sorted
-        for attachment in email.attachments
-        if attachment.local_path
     ]
+    with_documents = [(email, docs) for email, docs in with_documents if docs]
+    latest_email, latest_docs = with_documents[-1] if with_documents else (None, [])
 
     attachments = []
     excel_raw_by_filename = {}
-    if downloaded:
-        email, attachment = downloaded[-1]
+    # sorted so the per-sheet runs (and so the equipment tab order) are stable
+    for attachment in sorted(latest_docs, key=lambda a: a.filename.lower()):
         is_excel = Path(attachment.local_path).suffix.lower() in (".xlsx", ".xlsm")
         try:
             if is_excel:
@@ -622,11 +661,23 @@ def extract_specification_for_thread(thread) -> list:
             text = f"[ERROR extracting content: {e}]"
         attachments.append({
             "filename": attachment.filename,
-            "sent_at": email.sent_at,
+            "sent_at": latest_email.sent_at,
             "text": text,
         })
 
-    requested_equipments = call_claude_for_extraction(email_body, attachments)
+    if len(attachments) <= 1:
+        requested_equipments = call_claude_for_extraction(email_body, attachments)
+    else:
+        # Several datasheets in one email: extract each on its own, so the model
+        # can't merge two different units into one entry. Identical sheets
+        # (e.g. "2 Nos." with one datasheet each) are merged back into one item
+        # afterwards by comparing their filled-in fields - see
+        # template_consolidation.merge_identical_units.
+        requested_equipments = []
+        for att in attachments:
+            for item in call_claude_for_extraction(email_body, [att], focus_filename=att["filename"]):
+                item["source_attachment"] = att["filename"]
+                requested_equipments.append(item)
     return _ensure_definition_completeness(requested_equipments, excel_raw_by_filename)
 
 

@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     # LLM backend — local Ollama server (see llm_client.py). Replaces the
     # earlier direct Anthropic/Claude calls in extraction.py,
     # template_consolidation.py, and rag_justification.py.
-    ollama_base_url: str = "http://157.157.221.29:25241"
+    ollama_base_url: str = "http://213.173.105.18:33478"
     ollama_model: str = "qwen-custom"
 
     # Every call_llm() call (from extraction.py, template_consolidation.py,

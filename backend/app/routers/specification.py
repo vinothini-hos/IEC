@@ -31,7 +31,10 @@ def get_specification(thread_id: uuid.UUID, db: Session = Depends(get_db)):
     thread = db.query(models.Thread).filter_by(id=thread_id).first()
     if not thread:
         raise HTTPException(404, "Thread not found")
-    return {"status": thread.extraction_status, "result": thread.extraction_result}
+    return {
+        "status": thread.extraction_status,
+        "result": template_consolidation.refresh_labels(thread.extraction_result),
+    }
 
 
 @router.post("/{thread_id}/extract")

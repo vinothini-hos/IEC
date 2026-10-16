@@ -1,7 +1,7 @@
 """
 Draft BOQ: component count from P&ID drawings uploaded against one equipment
 item of an RFQ thread, using each drawing's own legend tables. An equipment
-item can have several drawings (sheets); its draft BOQ is their counts added up.
+item can have several drawings (sheets), each counted on its own.
 
 The counting/conversion scripts live as-is in settings.component_count_script_dir
 (backend/component_count/scripts) and are run as subprocesses - they're
@@ -21,11 +21,13 @@ Each uploaded drawing gets its own folder under settings.component_count_storage
 converted/check file and result.json.
 """
 import csv
+import hashlib
 import json
 import re
 import shutil
 import subprocess
 import sys
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -121,6 +123,47 @@ def _count_svg(folder: Path, steps: list) -> bool:
     return step["ok"] and (folder / "counts.csv").exists()
 
 
+class DuplicateDrawing(ValueError):
+    """The same file was already uploaded for this equipment item."""
+
+
+# Uploads still being counted: {(thread_id, equipment_index, sha256): file name}.
+# In memory on purpose - the page doesn't see a drawing until its count is saved,
+# so a refresh mid-count + re-upload would otherwise count the file twice; and a
+# count cut off by a server restart must not block uploading that file again.
+_counting: dict[tuple, str] = {}
+_counting_lock = threading.Lock()
+
+
+def _fingerprint(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _saved_fingerprint(folder: Path, result: dict) -> str | None:
+    """A counted drawing's fingerprint - stored in result.json, or (drawings
+    counted before fingerprints were stored) hashed from the uploaded file."""
+    if result.get("sha256"):
+        return result["sha256"]
+    upload = folder / f"drawing.{result.get('file_type')}"
+    return _fingerprint(upload.read_bytes()) if upload.is_file() else None
+
+
+def _find_duplicate(thread_id, equipment_index: int, sha: str) -> str | None:
+    """File name of a drawing of this equipment item with the same contents
+    (already counted, or still counting), or None."""
+    name = _counting.get((str(thread_id), int(equipment_index), sha))
+    if name:
+        return name
+    for f in _equipment_dir(thread_id, equipment_index).glob("*/result.json"):
+        try:
+            result = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if _saved_fingerprint(f.parent, result) == sha:
+            return result.get("file_name") or "another drawing"
+    return None
+
+
 def run(thread_id, equipment_index: int, filename: str, data: bytes) -> dict:
     ext = Path(filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -128,6 +171,31 @@ def run(thread_id, equipment_index: int, filename: str, data: bytes) -> dict:
     if not data:
         raise ValueError("The uploaded file is empty")
 
+    # the same file (by contents, whatever its name) only once per equipment item
+    sha = _fingerprint(data)
+    key = (str(thread_id), int(equipment_index), sha)
+    with _counting_lock:
+        existing = _find_duplicate(thread_id, equipment_index, sha)
+        if key in _counting:
+            raise DuplicateDrawing(
+                f"This drawing was already uploaded as \"{existing}\" and is still being "
+                "counted. It will appear here when the count finishes - no need to upload it again."
+            )
+        if existing:
+            raise DuplicateDrawing(
+                f"This drawing was already uploaded as \"{existing}\". "
+                "Remove that drawing first if you want to count it again."
+            )
+        _counting[key] = Path(filename).name
+    try:
+        return _count_upload(thread_id, equipment_index, filename, ext, data, sha)
+    finally:
+        with _counting_lock:
+            _counting.pop(key, None)
+
+
+def _count_upload(thread_id, equipment_index: int, filename: str, ext: str,
+                  data: bytes, sha: str) -> dict:
     run_id = uuid.uuid4().hex
     folder = _equipment_dir(thread_id, equipment_index) / run_id
     folder.mkdir(parents=True)
@@ -154,6 +222,7 @@ def run(thread_id, equipment_index: int, filename: str, data: bytes) -> dict:
         "run_id": run_id,
         "file_name": Path(filename).name,
         "file_type": ext[1:],
+        "sha256": sha,
         "ran_at": datetime.now().isoformat(timespec="seconds"),
         "counted_by": counted_by,
         "ok": counted_by is not None,
@@ -197,7 +266,7 @@ def drawing_count(thread_id) -> int:
 def set_count(thread_id, run_id: str, index: int, count: int | None) -> dict:
     """Override one component's count in a drawing (None reverts it to the
     count the script found, kept as detected_count while edited). Saved in the
-    drawing's result.json, so the combined BOQ picks it up too."""
+    drawing's result.json."""
     d = run_dir(thread_id, run_id)
     if d is None or not (d / "result.json").exists():
         raise LookupError("Drawing not found")
@@ -226,21 +295,3 @@ def delete_run(thread_id, run_id: str) -> bool:
         return False
     shutil.rmtree(d)
     return True
-
-
-def combine(runs: list[dict]) -> list[dict]:
-    """The equipment item's draft BOQ: every counted drawing's components added
-    up by name, in first-seen (legend) order. Matched on name only - SVG counts
-    have no category, so the same valve from a DXF and an SVG sheet still adds up."""
-    totals: dict[str, dict] = {}
-    for r in runs:
-        if not r.get("ok"):
-            continue
-        for c in r["components"]:
-            key = " ".join(c["component"].upper().split())
-            if key not in totals:
-                totals[key] = {"category": c["category"], "component": c["component"], "count": 0}
-            elif not totals[key]["category"]:
-                totals[key]["category"] = c["category"]
-            totals[key]["count"] += c["count"]
-    return list(totals.values())

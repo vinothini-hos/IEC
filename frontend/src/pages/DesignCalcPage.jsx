@@ -73,6 +73,12 @@ export default function DesignCalcPage() {
       value,
     });
     setCalcResult(result);
+    // A revert (empty value) puts the cell's original formula back, but its
+    // value is only known after a recalculation - run it now so the original
+    // value (and everything depending on it) shows straight away.
+    if (value === null || (typeof value === "string" && !value.trim())) {
+      await runCalc();
+    }
   };
 
   const sheets = calcResult?.sheets || [];

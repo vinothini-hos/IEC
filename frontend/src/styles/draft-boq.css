@@ -124,3 +124,27 @@
 .cc-count-input {
   width: 70px;
 }
+
+.cc-drawing-row {
+  cursor: pointer;
+}
+
+.cc-drawing-row:hover td,
+.cc-drawing-row.active td {
+  background: var(--color-active-bg);
+}
+
+.cc-drawing-row.active td:first-child {
+  font-weight: 600;
+  color: var(--color-active-text);
+}
+
+.cc-failed {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.cc-remove-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+}

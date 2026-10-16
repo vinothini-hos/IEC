@@ -8,6 +8,7 @@ mentioned_in) — classify each field's status, and build a ready-to-send
 clarification email draft when mandatory info is missing.
 """
 
+import difflib
 import json
 import re
 import sys
@@ -418,6 +419,25 @@ def _safe_filename(text: str, max_len: int = 60) -> str:
     return keep[:max_len] or "equipment"
 
 
+# "1000 kg/hr", "approximately 260 kg SO2/hr", "~260 kg/hr", "2,15,039 Kcal/hr"
+# -> the number + its per-hour unit, for a short tab label
+_CAPACITY_RE = re.compile(
+    r"(\d[\d,]*(?:\.\d+)?)\s*((?:kg|kcal|tonnes?|tons?|lbs?|nm3|m3)\b[^,;()/]{0,12}/\s*h(?:r|our)?\b)",
+    re.IGNORECASE,
+)
+
+
+def _short_capacity(value) -> str | None:
+    if value is None:
+        return None
+    text = str(value).split("(")[0]
+    m = _CAPACITY_RE.search(text)
+    if m:
+        return f"{m.group(1)} {re.sub(r'\s*/\s*', '/', ' '.join(m.group(2).split()))}"
+    text = text.strip()
+    return text if text and len(text) <= 20 else None
+
+
 def _classification_label(equipment_name: str, fields: dict) -> str:
     parts = [equipment_name]
     heat = fields.get("heating_media", {}).get("value")
@@ -430,7 +450,26 @@ def _classification_label(equipment_name: str, fields: dict) -> str:
             if "heat" not in heat_str.lower():
                 heat_str = f"{heat_str}-heated"
             parts.append(heat_str)
+    # capacity tells apart two items of the same type and heating, e.g. two
+    # steam-heated SO2 vaporizers of 500 and 1000 kg/hr in one RFQ
+    capacity = _short_capacity(fields.get("design_capacity_kg_hr", {}).get("value"))
+    if capacity:
+        parts.append(capacity)
     return " · ".join(parts)
+
+
+def refresh_labels(extraction_result: dict | None) -> dict | None:
+    """Re-derive each equipment item's classification_label (and the thread's
+    classification_summary) from its fields, so results extracted before a
+    label change show the current tab names without re-running extraction."""
+    if not extraction_result or not extraction_result.get("equipment_items"):
+        return extraction_result
+    items = [
+        {**it, "classification_label": _classification_label(it.get("equipment_name", ""), it.get("fields") or {})}
+        for it in extraction_result["equipment_items"]
+    ]
+    return {**extraction_result, "equipment_items": items,
+            "classification_summary": items[0]["classification_label"]}
 
 
 def has_real_value(entry: dict) -> bool:
@@ -456,6 +495,65 @@ def _find_latest_file(out_dir: Path, prefix: str):
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
+def _norm_value(value) -> str:
+    return " ".join(str(value).lower().split()).rstrip(".;,") if value is not None else ""
+
+
+def _same_value(a, b) -> bool:
+    """Two values the model wrote for the same field mean the same thing:
+    identical numbers (so 1000 vs 2000 kg/hr always differ) and the same
+    wording, give or take extra words ("SO2 vaporization" vs "SO2
+    liquid-to-vapor vaporization") - "Steam" vs "Electric" still differ."""
+    na, nb = _norm_value(a), _norm_value(b)
+    if na == nb:
+        return True
+    if not na or not nb:
+        return False
+    numbers = lambda s: sorted(re.findall(r"\d+(?:\.\d+)?", s.replace(",", "")))
+    if numbers(na) != numbers(nb):
+        return False
+    words = lambda s: set(re.findall(r"[a-z]+", s))
+    wa, wb = words(na), words(nb)
+    return wa <= wb or wb <= wa or difflib.SequenceMatcher(None, na, nb).ratio() >= 0.85
+
+
+def _same_spec(a: dict, b: dict) -> bool:
+    """Two filled field sets describe the same unit: every field's value
+    matches (see _same_value). "description" is just the equipment name."""
+    keys = (set(a) | set(b)) - {"description"}
+    return all(_same_value((a.get(k) or {}).get("value"), (b.get(k) or {}).get("value")) for k in keys)
+
+
+def merge_identical_units(units: list) -> list:
+    """Units extracted from different datasheets of one email (see
+    extraction.extract_specification_for_thread) that turn out to have the
+    same type and identical field values are one equipment item - e.g. "2 Nos."
+    with one identical datasheet each - so they share one tab, with the
+    quantity covering every sheet. Units with any differing value stay separate.
+    Each unit is {"equipment", "field_defs", "type_label", "field_values"}."""
+    merged = []
+    for unit in units:
+        sheet = unit["equipment"].get("source_attachment")
+        same = next((
+            m for m in merged
+            if sheet and m["equipment"].get("source_attachment")
+            and sheet not in m["sheets"]
+            and m["equipment"].get("equipment_name") == unit["equipment"].get("equipment_name")
+            and _same_spec(m["field_values"], unit["field_values"])
+        ), None)
+        if same is None:
+            merged.append({**unit, "sheets": [sheet] if sheet else [],
+                           "counts": [unit["equipment"].get("count", 1)]})
+        else:
+            same["sheets"].append(sheet)
+            same["counts"].append(unit["equipment"].get("count", 1))
+    for m in merged:
+        if len(m["sheets"]) > 1:
+            # one unit per identical sheet, unless a sheet itself states more
+            m["equipment"] = {**m["equipment"], "count": max(len(m["sheets"]), *m["counts"])}
+    return merged
+
+
 def run_data_extraction_for_thread(thread, requested_equipments: list) -> list:
     """For each requested_equipment entry, fill its template, classify field
     statuses, build a clarification draft if needed, and write it to
@@ -472,15 +570,23 @@ def run_data_extraction_for_thread(thread, requested_equipments: list) -> list:
     out_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%d%m%Y_%H%M%S")
 
-    equipment_items = []
-    written_prefixes = set()
-    for idx, equipment in enumerate(requested_equipments, start=1):
+    units = []
+    for equipment in requested_equipments:
         equipment_name = equipment.get("equipment_name", "Unknown Equipment")
         field_defs, type_label = get_template_fields(equipment_name)
         if field_defs is None:
             continue
+        units.append({
+            "equipment": equipment, "field_defs": field_defs, "type_label": type_label,
+            "field_values": fill_template_fields(equipment, field_defs),
+        })
 
-        field_values = fill_template_fields(equipment, field_defs)
+    equipment_items = []
+    written_prefixes = set()
+    for idx, unit in enumerate(merge_identical_units(units), start=1):
+        equipment = unit["equipment"]
+        equipment_name = equipment.get("equipment_name", "Unknown Equipment")
+        field_defs, type_label, field_values = unit["field_defs"], unit["type_label"], unit["field_values"]
 
         prefix = f"{idx:02d}_{type_label}_{_safe_filename(equipment_name)}"
         written_prefixes.add(prefix)
